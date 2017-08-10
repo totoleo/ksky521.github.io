@@ -1,0 +1,2510 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title><![CDATA[三水清]]></title>
+  <subtitle><![CDATA[程序媛鼓励师]]></subtitle>
+  <link href="/atom.xml" rel="self"/>
+  <link href="http://js8.in/"/>
+  <updated>2017-08-10T02:21:03.000Z</updated>
+  <id>http://js8.in/</id>
+  
+  <author>
+    <name><![CDATA[三水清]]></name>
+    <email><![CDATA[ksky521@gmail.com]]></email>
+  </author>
+  
+  <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[前端资源动态渲染模式介绍之seed篇]]></title>
+    <link href="http://js8.in/2016/07/24/%E5%89%8D%E7%AB%AF%E8%B5%84%E6%BA%90%E5%8A%A8%E6%80%81%E6%B8%B2%E6%9F%93%E6%A8%A1%E5%BC%8F%E4%BB%8B%E7%BB%8D%E4%B9%8Bseed%E7%AF%87/"/>
+    <id>http://js8.in/2016/07/24/前端资源动态渲染模式介绍之seed篇/</id>
+    <published>2016-07-24T08:59:26.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>前面两篇文章（<a href="/2016/06/24/前端资源动态渲染模式介绍之概览篇/" title="前端资源动态渲染模式介绍之概览篇">前端资源动态渲染模式介绍之概览篇</a> 和 <a href="/2016/07/12/前端资源动态渲染模式介绍之combo篇/" title="前端资源动态渲染模式介绍之combo篇">前端资源动态渲染模式介绍之combo篇</a>）介绍了combo模式，今天重点介绍下seed模式，seed模式是一种利用js动态解析页面模块依赖，而且结合localstorage和combo 服务，实现的一种速度更快的加载方式。</p>
+<h2 id="seed模式特点">seed模式特点</h2><ul>
+<li>结合打包工具，实现页面依赖管理，seedjs不需要维护整站（整个项目）的resourcemap，combo需要使用后台语言维护<code>map.json</code></li>
+<li>结合localstorage，将模块缓存到ls，方便全站（单域名）下公用，下载过模块避免二次请求</li>
+<li>对于更新的，没有下载过的模块，拼成combo url，一次加载，避免多次请求</li>
+</ul>
+<h2 id="如何实现seed模式">如何实现seed模式</h2><p>要实现seed模式，要修改模块定义和引入函数，例如AMD中的<code>define</code>和<code>require</code>，结合打包工具，实现静态资源依赖表<code>resourcemap</code>（例如fis中的map.json）的字段自定义</p>
+<h3 id="对define函数进行改造">对<code>define</code>函数进行改造</h3><p>首先对<code>define</code>函数进行改造，增加参数传入md5：<code>define(id, factory, md5)</code> ，使其将factory源码和版本号存入localstorage，文件的md5值，可以结合打包工具实现，fis中的<code>file</code>对象有个方法是<code>file.getHash()</code> 可以获取md5值，这个值还需要存入<code>resourcemap</code>，用于比较缓存中的version和下发的<code>resourcemap</code>是否一致，如果不一致则需要重新拉最新版本。</p>
+<p>localstorage中缓存的内容是factory的源码，加上version(hash)：</p>
+<pre><code class="js">//代码示例如下
+//找到resourcemap中的id
+var map = resouceMap[id];
+//拼缓存的数据
+var content = {
+    version: map.hash,
+    //code是factory的内容
+    code: factory.toString()
+}
+localStorage[id] = JSON.stringify(content)
+</code></pre>
+<h3 id="对resourcemap的改造">对<code>resourcemap</code>的改造</h3><p>这个很简单，增加个字段：<code>hash</code></p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>id</td>
+<td>唯一id</td>
+</tr>
+<tr>
+<td>uri</td>
+<td>线上cdn完整url</td>
+</tr>
+<tr>
+<td>hash</td>
+<td>文件md5</td>
+</tr>
+<tr>
+<td>deps</td>
+<td>依赖的模块</td>
+</tr>
+</tbody>
+</table>
+<h3 id="对文件进行改造">对文件进行改造</h3><p>为了防止每个页面都是用全局的<code>resourcemap</code>（fis的map.json），对于单个页面文件需要输出自己的依赖关系表<code>resourcemap</code>，减少页面的大小，这部分工作也是通过打包工具实现的。</p>
+<p>打包工具将每个页面的依赖关系遍历出来，然后输出到每个页面，例如fis3的做法是：<a href="http://fis.baidu.com/fis3/docs/lv3.html#%E9%9D%99%E6%80%81%E8%B5%84%E6%BA%90%E6%98%A0%E5%B0%84%E8%A1%A8" target="_blank" rel="external">http://fis.baidu.com/fis3/docs/lv3.html#%E9%9D%99%E6%80%81%E8%B5%84%E6%BA%90%E6%98%A0%E5%B0%84%E8%A1%A8</a></p>
+<h3 id="对require函数的改造">对<code>require</code>函数的改造</h3><p><code>require</code>函数是获取模块依赖关系，没有的则加载模块，优先加载依赖的模块，等依赖模块加载完毕后，再遍历向上加载，保证模块代码执行的时候，该模块依赖的模块都已经加载完毕。</p>
+<a id="more"></a>
+<p>在seed模式中，<code>require</code>发现一个模块没有执行，需要加载之前，应该先去localstorage中读取代码，如果有这个模块的代码，并且<code>version</code>跟<code>resourcemap</code>的值一致，那么就可以不加载，直接将localstorage的代码拼成<code>define</code>函数执行，如果version不一致或者localstorage中不存在require的模块id缓存，那么就收集该模块在<code>resourcemap</code>中的uri，等到依赖遍历完毕后，拼成combo url，一次性加载，避免挨个加载等候回调的窘相。</p>
+<pre><code class="js">//执行ls中的模块代码如下
+//如果在ls中，需要校验依赖是否都已经defined
+var mod;
+if (ls &amp;&amp; (mod = ls[id])) {
+    mod = JSON.parse(mod);
+    var childHash = map.hash;
+    //mod.v就是version
+    if (childHash &amp;&amp; mod.code &amp;&amp; mod.v === childHash) {
+        var s = document.createElement(&#39;script&#39;);
+        s.appendChild(document.createTextNode(&#39;Bdbox.define(&quot;&#39; + id + &#39;&quot;,&#39; + mod.code + &#39;)&#39;));
+        document.head.appendChild(s);
+    }
+}
+</code></pre>
+<p>combo url拼接的时候，可以设置combo root url和max_files，用于替换cdn地址和最大合并文件的数量</p>
+<h3 id="流程图如下">流程图如下</h3><p>下面流程图中，页面用到了<code>moduleA</code>的一个模块，<code>moduleA</code>模块依赖两个模块：<code>moduleB</code>和<code>moduleC</code>，页面的流程如下<br><img src="/img/posts/seed.png" alt="seed模式流程图"></p>
+<h2 id="扩展阅读">扩展阅读</h2><ul>
+<li><a href="/2016/06/24/前端资源动态渲染模式介绍之概览篇/" title="前端资源动态渲染模式介绍之概览篇">前端资源动态渲染模式介绍之概览篇</a></li>
+<li><a href="/2016/07/12/前端资源动态渲染模式介绍之combo篇/" title="前端资源动态渲染模式介绍之combo篇">前端资源动态渲染模式介绍之combo篇</a></li>
+<li><a href="/2016/07/24/前端资源动态渲染模式介绍之seed篇/" title="前端资源动态渲染模式介绍之seed篇">前端资源动态渲染模式介绍之seed篇</a>
+</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>前面两篇文章（<a href="/2016/06/24/前端资源动态渲染模式介绍之概览篇/" title="前端资源动态渲染模式介绍之概览篇">前端资源动态渲染模式介绍之概览篇</a> 和 <a href="/2016/07/12/前端资源动态渲染模式介绍之combo篇/" title="前端资源动态渲染模式介绍之combo篇">前端资源动态渲染模式介绍之combo篇</a>）介绍了combo模式，今天重点介绍下seed模式，seed模式是一种利用js动态解析页面模块依赖，而且结合localstorage和combo 服务，实现的一种速度更快的加载方式。</p>
+<h2 id="seed模式特点">seed模式特点</h2><ul>
+<li>结合打包工具，实现页面依赖管理，seedjs不需要维护整站（整个项目）的resourcemap，combo需要使用后台语言维护<code>map.json</code></li>
+<li>结合localstorage，将模块缓存到ls，方便全站（单域名）下公用，下载过模块避免二次请求</li>
+<li>对于更新的，没有下载过的模块，拼成combo url，一次加载，避免多次请求</li>
+</ul>
+<h2 id="如何实现seed模式">如何实现seed模式</h2><p>要实现seed模式，要修改模块定义和引入函数，例如AMD中的<code>define</code>和<code>require</code>，结合打包工具，实现静态资源依赖表<code>resourcemap</code>（例如fis中的map.json）的字段自定义</p>
+<h3 id="对define函数进行改造">对<code>define</code>函数进行改造</h3><p>首先对<code>define</code>函数进行改造，增加参数传入md5：<code>define(id, factory, md5)</code> ，使其将factory源码和版本号存入localstorage，文件的md5值，可以结合打包工具实现，fis中的<code>file</code>对象有个方法是<code>file.getHash()</code> 可以获取md5值，这个值还需要存入<code>resourcemap</code>，用于比较缓存中的version和下发的<code>resourcemap</code>是否一致，如果不一致则需要重新拉最新版本。</p>
+<p>localstorage中缓存的内容是factory的源码，加上version(hash)：</p>
+<pre><code class="js">//代码示例如下
+//找到resourcemap中的id
+var map = resouceMap[id];
+//拼缓存的数据
+var content = {
+    version: map.hash,
+    //code是factory的内容
+    code: factory.toString()
+}
+localStorage[id] = JSON.stringify(content)
+</code></pre>
+<h3 id="对resourcemap的改造">对<code>resourcemap</code>的改造</h3><p>这个很简单，增加个字段：<code>hash</code></p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>id</td>
+<td>唯一id</td>
+</tr>
+<tr>
+<td>uri</td>
+<td>线上cdn完整url</td>
+</tr>
+<tr>
+<td>hash</td>
+<td>文件md5</td>
+</tr>
+<tr>
+<td>deps</td>
+<td>依赖的模块</td>
+</tr>
+</tbody>
+</table>
+<h3 id="对文件进行改造">对文件进行改造</h3><p>为了防止每个页面都是用全局的<code>resourcemap</code>（fis的map.json），对于单个页面文件需要输出自己的依赖关系表<code>resourcemap</code>，减少页面的大小，这部分工作也是通过打包工具实现的。</p>
+<p>打包工具将每个页面的依赖关系遍历出来，然后输出到每个页面，例如fis3的做法是：<a href="http://fis.baidu.com/fis3/docs/lv3.html#%E9%9D%99%E6%80%81%E8%B5%84%E6%BA%90%E6%98%A0%E5%B0%84%E8%A1%A8">http://fis.baidu.com/fis3/docs/lv3.html#%E9%9D%99%E6%80%81%E8%B5%84%E6%BA%90%E6%98%A0%E5%B0%84%E8%A1%A8</a></p>
+<h3 id="对require函数的改造">对<code>require</code>函数的改造</h3><p><code>require</code>函数是获取模块依赖关系，没有的则加载模块，优先加载依赖的模块，等依赖模块加载完毕后，再遍历向上加载，保证模块代码执行的时候，该模块依赖的模块都已经加载完毕。</p>]]>
+    
+    </summary>
+    
+      <category term="资源管理" scheme="http://js8.in/tags/%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86/"/>
+    
+      <category term="渲染模式" scheme="http://js8.in/tags/%E6%B8%B2%E6%9F%93%E6%A8%A1%E5%BC%8F/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[前端资源动态渲染模式介绍之combo篇]]></title>
+    <link href="http://js8.in/2016/07/12/%E5%89%8D%E7%AB%AF%E8%B5%84%E6%BA%90%E5%8A%A8%E6%80%81%E6%B8%B2%E6%9F%93%E6%A8%A1%E5%BC%8F%E4%BB%8B%E7%BB%8D%E4%B9%8Bcombo%E7%AF%87/"/>
+    <id>http://js8.in/2016/07/12/前端资源动态渲染模式介绍之combo篇/</id>
+    <published>2016-07-12T12:59:26.000Z</published>
+    <updated>2017-08-10T02:47:04.000Z</updated>
+    <content type="html"><![CDATA[<p>今天继续介绍前端资源动态渲染模式中的combo模式，combo模式是利用静态服务器的combo服务，结合静态分析页面使用的js或者css文件，然后动态输出combo url地址的方式。</p>
+<h2 id="静态资源combo服务">静态资源combo服务</h2><p>公司静态集群使用的是nginx服务，nginx有个concat模块可以将url进行打包。使用它之后，需要合并输出的静态资源需要在<code>??</code>两个问号后面加<code>,</code>逗号隔开，例如：</p>
+<pre><code>http://baidu.com??style1.css,style2.css
+http://box.bdimg.com/life/js??script1.js,script2.js
+</code></pre><p>当然这种合并的文件数也是有限的，如果超过默认或者设置的最大文件数，服务就会报错，可以通过修改<code>nginx.conf</code>的配置进行修改：</p>
+<pre><code class="config">location /static/ {
+    concat on;
+    concat_max_files 20;
+}
+</code></pre>
+<h2 id="combo渲染模式">combo渲染模式</h2><p>前文介绍过基本原理，现在就拿smarty模板的<code>{% require name="life:js/demo" %}</code>说下具体的代码实现步骤，其他语言参考即可，我们还有个node版本的，node我们采用了yog2框架，其实是一样的，如果是直接php，其实就是个引入的函数而已（从第二步开始）</p>
+<ol>
+<li>执行<code>{% require name="life:js/demo" %}</code>，进入smarty的扩展语法require标签的实现</li>
+<li>实际执行的是 <code>Resource.class</code>的load函数：<code>Resource::load(&#39;life:js/demo&#39;)</code></li>
+<li>load函数根据传入的id（life:js/demo），读取<code>life-map.json</code>（fis生成的静态资源表），根据id找到类似下面的内容：<pre><code class="json">&quot;life:js/demo&quot;:{
+&quot;uri&quot;:&quot;http://s.box.bdimg.com/lf/js/demo_defb566.js&quot;,
+&quot;type&quot;:&quot;js&quot;,
+&quot;deps&quot;:[&quot;common:bdbox/template&quot;],
+&quot;rUri&quot;:&quot;/static/lf/js/demo_defb566.js&quot;,
+&quot;hash&quot;: &quot;defb566&quot;
+}
+</code></pre>
+</li>
+</ol>
+<a id="more"></a>
+<p>解释下：</p>
+<ul>
+<li>uri：是线上cdn的地址</li>
+<li>deps：是依赖的模块id数组，会循环遍历查找</li>
+<li>rUri：是我们独有的，增加fis插件实现的，相对路径</li>
+<li>hash：独有，fis插件实现，7位md5值，可以看成版本号，后面seed模式使用</li>
+</ul>
+<ol>
+<li>将找到的内容压入数组<code>$arrStaticCollection</code></li>
+<li>页面结束的时候，执行<code>Resource</code>的<code>render</code>方法，传入渲染模式：combo/seed/inline/tag等</li>
+<li>render函数根据不同的模式进行不同的操作，然后输出内容</li>
+</ol>
+<h3 id="Resource_class的核心代码">Resource class的核心代码</h3><pre><code class="php">class Resouce {
+    // 这里是combo的前缀url，用占位符，在node打包的时候根据实际配置替换
+    const COMBO_SERVER_URL = &#39;&lt;!--[COMBO_SEVER_URL]--&gt;&#39;;
+    // 最大合并的文件数
+    const COMBO_MAX_COUNT = 15;
+    // 收集的数组
+    private static $arrStaticCollection = array();
+
+    public static function load($id){
+
+    }
+    public static function render($type){
+        if($type==&#39;combo&#39;){
+            // 只写下js的方法
+            $arrURIs = &amp; self::$arrStaticCollection[&#39;js&#39;];
+            foreach ($arrURIs as $val) {
+                if ($val[&#39;uri&#39;] === self::$framework[&#39;uri&#39;]) {
+                    continue;
+                }
+                if(isset($val[&#39;remote&#39;]) &amp;&amp; $val[&#39;remote&#39;]){
+                    //碰见线上url，先输出现有的combo
+                    if (!empty($jsComboArr)) {
+                        $html .= self::getComboHtml(&#39;js&#39;, $jsComboArr);
+                        //重设为空
+                        $jsComboArr = array();
+                    }
+                    $html .= &#39;&lt;script src=&quot;&#39;.$val[&#39;uri&#39;].&#39;&quot;&gt;&lt;/script&gt;&#39; . PHP_EOL;
+                }else{
+                    //获取combo的url，根据uri进行同路径替换
+                    $strPath = self::parseComboURI(self::getComboUrl(), $val[&#39;uri&#39;], $val[&#39;rUri&#39;]);
+
+                    $jsComboArr[] = $strPath;
+                }
+
+            }
+        }
+    }
+}
+</code></pre>
+<h2 id="静态combo方法">静态combo方法</h2><p>上面说的是动态combo，即通过php这些动态语言，边分析边使用combo，适合多平台，多判断的情况，缺点是：需要动态读取map.json分析需要合并那些文件。如果是简单的静态服务，一开始就合并起来，那么可以使用<code>fis3-postpackager-loader</code> 这个模块，我已经提交了pr：<a href="https://github.com/fex-team/fis3-postpackager-loader/pull/49/files" target="_blank" rel="external">https://github.com/fex-team/fis3-postpackager-loader/pull/49/files</a></p>
+<p>使用方法：</p>
+<pre><code>fis.match(&#39;::packager&#39;, {
+  postpackager: fis.plugin(&#39;loader&#39;, {
+    renderMode: {
+      &#39;type&#39;: &#39;combo&#39;, //默认是tag
+      comboMaxFiles: 15, //最大combo文件
+      prefixer: &#39;//xxxx??&#39; //combo服务器地址，或者function
+    }
+  })
+});
+</code></pre><p>有别于allinone模式，会页面用到的静态资源合并到一个文件，这个是把用到的文件合并为一个combo URL。</p>
+<h2 id="扩展阅读">扩展阅读</h2><ul>
+<li><a href="/2016/06/24/前端资源动态渲染模式介绍之概览篇/" title="前端资源动态渲染模式介绍之概览篇">前端资源动态渲染模式介绍之概览篇</a></li>
+<li><a href="/2016/07/12/前端资源动态渲染模式介绍之combo篇/" title="前端资源动态渲染模式介绍之combo篇">前端资源动态渲染模式介绍之combo篇</a></li>
+<li><a href="/2016/07/24/前端资源动态渲染模式介绍之seed篇/" title="前端资源动态渲染模式介绍之seed篇">前端资源动态渲染模式介绍之seed篇</a>
+</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>今天继续介绍前端资源动态渲染模式中的combo模式，combo模式是利用静态服务器的combo服务，结合静态分析页面使用的js或者css文件，然后动态输出combo url地址的方式。</p>
+<h2 id="静态资源combo服务">静态资源combo服务</h2><p>公司静态集群使用的是nginx服务，nginx有个concat模块可以将url进行打包。使用它之后，需要合并输出的静态资源需要在<code>??</code>两个问号后面加<code>,</code>逗号隔开，例如：</p>
+<pre><code>http://baidu.com??style1.css,style2.css
+http://box.bdimg.com/life/js??script1.js,script2.js
+</code></pre><p>当然这种合并的文件数也是有限的，如果超过默认或者设置的最大文件数，服务就会报错，可以通过修改<code>nginx.conf</code>的配置进行修改：</p>
+<pre><code class="config">location /static/ {
+    concat on;
+    concat_max_files 20;
+}
+</code></pre>
+<h2 id="combo渲染模式">combo渲染模式</h2><p>前文介绍过基本原理，现在就拿smarty模板的<code>{% require name="life:js/demo" %}</code>说下具体的代码实现步骤，其他语言参考即可，我们还有个node版本的，node我们采用了yog2框架，其实是一样的，如果是直接php，其实就是个引入的函数而已（从第二步开始）</p>
+<ol>
+<li>执行<code>{% require name="life:js/demo" %}</code>，进入smarty的扩展语法require标签的实现</li>
+<li>实际执行的是 <code>Resource.class</code>的load函数：<code>Resource::load(&#39;life:js/demo&#39;)</code></li>
+<li>load函数根据传入的id（life:js/demo），读取<code>life-map.json</code>（fis生成的静态资源表），根据id找到类似下面的内容：<pre><code class="json">&quot;life:js/demo&quot;:{
+&quot;uri&quot;:&quot;http://s.box.bdimg.com/lf/js/demo_defb566.js&quot;,
+&quot;type&quot;:&quot;js&quot;,
+&quot;deps&quot;:[&quot;common:bdbox/template&quot;],
+&quot;rUri&quot;:&quot;/static/lf/js/demo_defb566.js&quot;,
+&quot;hash&quot;: &quot;defb566&quot;
+}
+</code></pre>
+</li>
+</ol>]]>
+    
+    </summary>
+    
+      <category term="资源管理" scheme="http://js8.in/tags/%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86/"/>
+    
+      <category term="渲染模式" scheme="http://js8.in/tags/%E6%B8%B2%E6%9F%93%E6%A8%A1%E5%BC%8F/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[JavaScript sdk(jssdk)设计指南]]></title>
+    <link href="http://js8.in/2016/06/29/javascript%20sdk(jssdk)%E8%AE%BE%E8%AE%A1%E6%8C%87%E5%8D%97/"/>
+    <id>http://js8.in/2016/06/29/javascript sdk(jssdk)设计指南/</id>
+    <published>2016-06-28T22:42:06.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>今天看到一篇《<a href="http://www.zcfy.cc/original/403" target="_blank" rel="external">javascript sdk设计指南</a>》，内容篇幅比较多，很多实际是问题的枚举，但是信息量太大，所以我结合之前做微博开放平台和运营活动平台的经验，说下jssdk的设计和一些核心问题的解决方案。</p>
+<p>一个jssdk一般是指提供给第三方人员使用的一段js，通过这个js实现一些平台化产品提供的服务，比如<a href="http://jssdk.sinaapp.com/" target="_blank" rel="external">微博的jssdk</a>。整个jssdk的设计有一下几个核心问题：</p>
+<ul>
+<li>代码如何被使用页面接入</li>
+<li>如何实现跨域通信</li>
+<li>如何实现优雅api的设计</li>
+<li>公共资源的使用</li>
+<li>代码组件化</li>
+</ul>
+<p>先说第一个问题</p>
+<h2 id="代码如何被使用页面接入">代码如何被使用页面接入</h2><p>这个问题涉及到几个小问题需要讨论：</p>
+<ul>
+<li>命名空间</li>
+<li>样式冲突</li>
+<li>版本维护</li>
+<li>appid等参数的传入</li>
+</ul>
+<h3 id="命名空间">命名空间</h3><p>在「<strong>命名空间</strong>」部分，需要做到<code>不污染环境，保护好自己</code>，即不要对本来的页面造成命名的破坏，只是用一个命名空间，又要考虑到第三方页面的复杂性，防止跟错综复杂的命名空间冲突。</p>
+<p>要做到这点，需要我们在命名空间命名的时候多注意下，尽量不要使用业内通用的命名方法，比如驼峰，名字尽量起的怪一些，偏一些，一般，要么使用<code>_</code>开头（甚至多个），要么使用项目代号这些不太被别人想到的名字，嗯，我记得有人命名空间用<code>av</code>，很好呀！</p>
+<p>还有一种方式是动态的命名空间，在url中带上<code>namespace=xxx</code>，本节结束后面会统一给出示例</p>
+<h3 id="样式冲突">样式冲突</h3><p>除了js命名空间问题，如果jssdk带有UI组件，那么还需要考虑css的样式冲突问题，这里不用多说，记住以下几点：</p>
+<ul>
+<li>一些复杂的widget可以使用iframe方式引入</li>
+<li>不使用id</li>
+<li>使用带前缀的class命名，前面用一个class最好包裹</li>
+<li>自己做reset！</li>
+<li>跟js相关的class要有特殊的约定（比如<code>_J-xxx</code> ）或者使用<code>data-id</code>代替</li>
+</ul>
+<p>其实利用sass、less这些预编译语言很容易</p>
+<p>例如下面的代码：</p>
+<pre><code class="sass">$name: avUI;
+
+.#{$name}__dialog{
+    @include reset();
+    .#{$name}__dialog__header{
+        color: white;
+    }
+}
+</code></pre>
+<h3 id="版本维护">版本维护</h3><p>版本维护的目的是保证代码最新，功能最全，而不用每次做了升级，通知所有使用的第三方开发者把自己页面的代码挨个更换。所以这里版本维护不应该暴漏给使用者，比如在url使用版本号，到了2.0版本，通知使用方替换，这是不合理的，总有些公司或者人不配合的。最好的方法是设计的时候就要考虑到这个问题。</p>
+<p>一般有两种比较好的方式：</p>
+<ul>
+<li>小拖大，动拖静：即第三方引入的js是一个动态的，或者没有缓存没有cdn的，然后由它带出后面的cdn</li>
+<li>隔段时间动态创建script</li>
+</ul>
+<p>推荐使用「小拖大，动拖静」，后面介绍组件化也要使用这个方式来按需加载代码</p>
+<h4 id="小拖大，动拖静">小拖大，动拖静</h4><p>核心代码示例</p>
+<pre><code class="js">(function(){
+    .....
+    var url = &#39;最新版本cdn的地址&#39;;
+    load(url);
+}())
+</code></pre>
+<h4 id="隔段时间动态创建script">隔段时间动态创建script</h4><p>代码示例：</p>
+<pre><code class="js">(function () {
+    var s = document.createElement(&#39;script&#39;);
+    s.type = &#39;text/javascript&#39;;
+    var t = +new Date;
+    t -= %864E5;
+    s.src = &#39;http://xxx.com/sdk.js?t=&#39;+t;
+    var x = document.getElementsByTagName(&#39;script&#39;)[0];
+    x.parentNode.insertBefore(s, x);
+  })();
+</code></pre>
+<a id="more"></a>
+<h3 id="appid等参数的传入">appid等参数的传入</h3><p>一般在引入sdkjs代码的时候需要加参数或者版本号，比如开放平台需要配置<code>appid</code>，所以url写法是：<br><code>sdk.js?appid=xxxx&amp;namespace=xxx</code> 。jssdk需要拿到url中的这些参数，方法有以下两种比较通用的：</p>
+<ul>
+<li>给script标签增加特殊属性，例如<code>&lt;script src=&quot;path/sdk.js?appid=123&quot; id=&quot;_jssdk&quot;&gt;</code> </li>
+<li>使用查找script标签方式：<pre><code class="js">//get url args function
+function parserUrl(){
+  var scripts = document.getElementsByTagName(&quot;script&quot;),
+      len = scripts.length,
+      url;
+  if (len &gt; 0) {
+      for (var i = 0; i &lt; len; i++) {
+          if (scripts[i].src.indexOf(&quot;path/to/sdk.js&quot;) !== -1) {
+              return scripts[i].src.split(&quot;?&quot;).pop();
+          }
+      }
+  }
+}
+</code></pre>
+</li>
+</ul>
+<p>所以appid，namespace这些都可以解析出来</p>
+<h2 id="如何实现跨域通信">如何实现跨域通信</h2><p>对于不在一个域名下的第三方页面引入的jssdk少不了的是跨域请求，这块移动上可以直接使用<code>postMessage</code>方法，将来可以使用xhr2+CORS，相兼容IE，可以参考《<a href="http://js8.in/tags/%E8%B7%A8%E5%9F%9F/">三水清跨域tag</a>》的内容，这里不做过多介绍</p>
+<h2 id="如何实现优雅api的设计">如何实现优雅api的设计</h2><p>这里的api指的是开放平台提供的http接口，一般都会有一些标准的规范，比如：</p>
+<ul>
+<li>获取用户信息：<a href="http://domain.com/api/getUserInfo.json" target="_blank" rel="external">http://domain.com/api/getUserInfo.json</a></li>
+<li>更新用户信息：<a href="http://domain.com/api/updateUserInfo.json" target="_blank" rel="external">http://domain.com/api/updateUserInfo.json</a></li>
+</ul>
+<p>我们设计这个函数接口的时候，应该充分考虑到将来server接口的增加，所以应该做成通用的服务，比如我们设计个<code>sdkjs.api</code>方法，接受四个参数：url\data\callback\method，默认如果data是函数就后面参数自动前提。</p>
+<pre><code class="js">api: function(url, data, callback, method) {
+    var _args = $.toArray(arguments),
+        _callback = _args[2] || $.emptyFn;
+
+    if (_args.length &lt; 3) {
+        throw Error(&quot;api arguments length wrong&quot;);
+    }
+
+    if (!$.isString(_args[0]) || !$.isObject(_args[1]) || !$.isFunction(_callback)) {
+        throw Error(&quot;api arguments format error&quot;);
+    }
+
+    var _cbid = 0;
+
+    if ($.isFunction(_callback)) {
+        _cbid = _CallbackManager.add(_callback);
+    }
+    //跨域发起请求
+    xDomain.send(&quot;api&quot;, {
+        url: _args[0],
+        data: _args[1],
+        method: _args[3] || &quot;get&quot;,
+        _cbid: _cbid
+    });
+    return back;
+}
+</code></pre>
+<h2 id="公共资源的使用">公共资源的使用</h2><p>公共资源的使用，指的是一些跟宿主环境共享的资源，比如cookie、localstorage这些，使用的时候应该做前缀处理，尽量不污染宿主页面环境，同时保证不被轻易的删除。</p>
+<h2 id="代码组件化">代码组件化</h2><p>代码的组织在一些带有UI的jssdk中使用较多，比如按需加载某个UI模块。这时候就充分利用到了第一节提到的「小拖大，动拖静」的引入方式，一开始小文件我们叫seed，里面有UI组件和sdk主代码的url，seed.js加载后，先加载sdk的核心js文件，然后如果使用某个UI组件，就按需加载。</p>
+<pre><code class="js">var MAP = {
+    core: [&#39;sdk-core.js&#39;],
+    ui: {
+        loginDialog: [&#39;path/loginDialog.css&#39;, &#39;path/loginDialog.js&#39;]
+    }
+}
+load(MAP.core);
+
+//使用
+SDKJS.ready(function($){
+    //$实际是SDKJS
+    $.use(&#39;loginDialog&#39;, function(loginDialog){
+        loginDialog(xxxxx);
+    })
+});
+</code></pre>
+<p>其中<code>.use</code>方法，有些类似<code>require</code>方法，起到按需加载的功能。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>今天看到一篇《<a href="http://www.zcfy.cc/original/403">javascript sdk设计指南</a>》，内容篇幅比较多，很多实际是问题的枚举，但是信息量太大，所以我结合之前做微博开放平台和运营活动平台的经验，说下jssdk的设计和一些核心问题的解决方案。</p>
+<p>一个jssdk一般是指提供给第三方人员使用的一段js，通过这个js实现一些平台化产品提供的服务，比如<a href="http://jssdk.sinaapp.com/">微博的jssdk</a>。整个jssdk的设计有一下几个核心问题：</p>
+<ul>
+<li>代码如何被使用页面接入</li>
+<li>如何实现跨域通信</li>
+<li>如何实现优雅api的设计</li>
+<li>公共资源的使用</li>
+<li>代码组件化</li>
+</ul>
+<p>先说第一个问题</p>
+<h2 id="代码如何被使用页面接入">代码如何被使用页面接入</h2><p>这个问题涉及到几个小问题需要讨论：</p>
+<ul>
+<li>命名空间</li>
+<li>样式冲突</li>
+<li>版本维护</li>
+<li>appid等参数的传入</li>
+</ul>
+<h3 id="命名空间">命名空间</h3><p>在「<strong>命名空间</strong>」部分，需要做到<code>不污染环境，保护好自己</code>，即不要对本来的页面造成命名的破坏，只是用一个命名空间，又要考虑到第三方页面的复杂性，防止跟错综复杂的命名空间冲突。</p>
+<p>要做到这点，需要我们在命名空间命名的时候多注意下，尽量不要使用业内通用的命名方法，比如驼峰，名字尽量起的怪一些，偏一些，一般，要么使用<code>_</code>开头（甚至多个），要么使用项目代号这些不太被别人想到的名字，嗯，我记得有人命名空间用<code>av</code>，很好呀！</p>
+<p>还有一种方式是动态的命名空间，在url中带上<code>namespace=xxx</code>，本节结束后面会统一给出示例</p>
+<h3 id="样式冲突">样式冲突</h3><p>除了js命名空间问题，如果jssdk带有UI组件，那么还需要考虑css的样式冲突问题，这里不用多说，记住以下几点：</p>
+<ul>
+<li>一些复杂的widget可以使用iframe方式引入</li>
+<li>不使用id</li>
+<li>使用带前缀的class命名，前面用一个class最好包裹</li>
+<li>自己做reset！</li>
+<li>跟js相关的class要有特殊的约定（比如<code>_J-xxx</code> ）或者使用<code>data-id</code>代替</li>
+</ul>
+<p>其实利用sass、less这些预编译语言很容易</p>
+<p>例如下面的代码：</p>
+<pre><code class="sass">$name: avUI;
+
+.#{$name}__dialog{
+    @include reset();
+    .#{$name}__dialog__header{
+        color: white;
+    }
+}
+</code></pre>
+<h3 id="版本维护">版本维护</h3><p>版本维护的目的是保证代码最新，功能最全，而不用每次做了升级，通知所有使用的第三方开发者把自己页面的代码挨个更换。所以这里版本维护不应该暴漏给使用者，比如在url使用版本号，到了2.0版本，通知使用方替换，这是不合理的，总有些公司或者人不配合的。最好的方法是设计的时候就要考虑到这个问题。</p>
+<p>一般有两种比较好的方式：</p>
+<ul>
+<li>小拖大，动拖静：即第三方引入的js是一个动态的，或者没有缓存没有cdn的，然后由它带出后面的cdn</li>
+<li>隔段时间动态创建script</li>
+</ul>
+<p>推荐使用「小拖大，动拖静」，后面介绍组件化也要使用这个方式来按需加载代码</p>
+<h4 id="小拖大，动拖静">小拖大，动拖静</h4><p>核心代码示例</p>
+<pre><code class="js">(function(){
+    .....
+    var url = &#39;最新版本cdn的地址&#39;;
+    load(url);
+}())
+</code></pre>
+<h4 id="隔段时间动态创建script">隔段时间动态创建script</h4><p>代码示例：</p>
+<pre><code class="js">(function () {
+    var s = document.createElement(&#39;script&#39;);
+    s.type = &#39;text/javascript&#39;;
+    var t = +new Date;
+    t -= %864E5;
+    s.src = &#39;http://xxx.com/sdk.js?t=&#39;+t;
+    var x = document.getElementsByTagName(&#39;script&#39;)[0];
+    x.parentNode.insertBefore(s, x);
+  })();
+</code></pre>]]>
+    
+    </summary>
+    
+      <category term="javascript" scheme="http://js8.in/tags/javascript/"/>
+    
+      <category term="跨域" scheme="http://js8.in/tags/%E8%B7%A8%E5%9F%9F/"/>
+    
+      <category term="jssdk" scheme="http://js8.in/tags/jssdk/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[前端资源动态渲染模式介绍之概览篇]]></title>
+    <link href="http://js8.in/2016/06/24/%E5%89%8D%E7%AB%AF%E8%B5%84%E6%BA%90%E5%8A%A8%E6%80%81%E6%B8%B2%E6%9F%93%E6%A8%A1%E5%BC%8F%E4%BB%8B%E7%BB%8D%E4%B9%8B%E6%A6%82%E8%A7%88%E7%AF%87/"/>
+    <id>http://js8.in/2016/06/24/前端资源动态渲染模式介绍之概览篇/</id>
+    <published>2016-06-24T08:59:26.000Z</published>
+    <updated>2017-08-10T02:46:48.000Z</updated>
+    <content type="html"><![CDATA[<p>在手百我们使用了一种动态管理静态资源的方式，在开发中通常打包工具在打包构建的时候根据页面依赖将所有的js或者css打成一个<code>app.js</code>或者<code>app.css</code>，这样的打包方式我们称之为「静态打包」，因为只能在项目发布构建的过程中一次性将页面用到的js或者css打包成一个文件，上完线之后就不能在拆分。</p>
+<p>这种「静态打包」的方式有个弊端：如果在多个view的页面，是不能够充分利用不同页面之间的公用代码（模块）。于是加强版就是在线统计一个网站（项目）模块依赖和公用的代码，然后设置一个阈值，利用统计的数据，分析出多个页面高频使用的公共代码，再下次上线的时候，将这部分代码打包在一起。这种方式百度内部也有类似的解决方案，但是这种方案也没有充分发挥出细粒度模块的作用，而且实现相对来说比较麻烦，需要长期数据统计支持。</p>
+<p>今天我介绍下手百中我们实现的一种动态管理静态资源的方式，我将它称之为「前端资源动态渲染模式」，简称「渲染模式」。这种方式是基于手百现有业务出发的，解决了手百不同平台（安卓、ios、winphone）的代码差异，而且充分利用缓存、combo服务，做到可配方便调试的目的。</p>
+<h2 id="前端资源动态渲染模式特点">前端资源动态渲染模式特点</h2><blockquote>
+<p>代码永远只写一份，不需要编写特殊逻辑</p>
+</blockquote>
+<p>我们实现的渲染模式，对于代码开发者来说，不需要做特殊的逻辑编写，只需要按照正常编码要求来写代码，剩下的就交给打包工具和上线流程，对于初学者不需要任何的学习门槛，而且支持本地静态资源和外部静态资源混用。</p>
+<blockquote>
+<p>能够根据不同平台，不同后端业务逻辑，动态打包不同代码</p>
+</blockquote>
+<p>后端业务逻辑不通，则需要的js或者css文件不通，之前的做法是一个js里面包含了所有的代码逻辑，现在只需要如下代码：</p>
+<pre><code class="smarty">{% if($isiOS) %}
+    {% require name="life:ios/invoke.js" %}
+{%else%}
+    {% require name="life:android/invoke.js" %}
+{% endif%}
+</code></pre>
+<p>这个是动态逻辑解析后的执行，所以编译阶段的静态打包是完全解决不了这个问题的。</p>
+<blockquote>
+<p>结合combo服务或者localstorage做缓存优化</p>
+</blockquote>
+<p>利用静态资源的combo服务和浏览器的localstorage存储，我们可以把渲染模式进一步优化，最简单的方式是combo渲染模式，动态分析完页面依赖之后，将url拼接成combo url一次输出<br><a id="more"></a></p>
+<blockquote>
+<p>多种渲染模式，可以适用不同的应用业务场景</p>
+</blockquote>
+<p>在不同的业务场景下，需要的代码组织形式不同，比如2G下，应该尽量少的http请求，这时候需要inline模式，将js和css分别放在<code>&lt;script&gt;</code> 和 <code>&lt;style&gt;</code> 标签内，而我们写代码不需要这样写，还是使用正常的<code>{%require %}</code> 语法</p>
+<blockquote>
+<p>可结合用户设备特征，自动智能选择不同的渲染模式</p>
+</blockquote>
+<p>对于不同的用户、设备和网络环境，能够自动识别出来最适合的渲染模式，例如对于2G用户，推荐使用http请求少的inline模式，对于3G、4G用户能够使用combo模式，对于支持localstorage的用户使用seed模式，这些修改只需要在父模板设置渲染模式即可：</p>
+<pre><code class="smarty">{%if $network==='slow'%}
+    {%html rendermode='inline'%}
+{%elseif $isSuportLS%}
+    {%html rendermode='seed'%}
+{%else%}
+    {%html rendermode='combo'%}
+{%endif%}
+</code></pre>
+<h2 id="技术要点">技术要点</h2><p>下面列下大概的技术要点：</p>
+<ol>
+<li>利用项目发布阶段生成的静态资源依赖管理表，fis对应的是<code>map.json</code>，里面有每个静态资源的信息，可以利用打包工具，对这个表进行扩展，增加想要的信息，比如release之后的cdn url，发布上线后到路径，文件的MD5值</li>
+<li>利用smarty扩展（本质是php的某个函数），将页面需要的静态资源收集起来</li>
+<li>页面html输出的时候，需要将需要根据不同渲染模式，读取<code>map.json</code>内静态资源配置，比如combo需要读取去掉combo url的cdn url，拼接最终的url；tag模式需要单个的cdn url；seed需要读取MD5值；inline需要知道线上部署的路径，可以读取出来文件内容塞到<code>&lt;script&gt;</code>或<code>&lt;style&gt;</code>标签内</li>
+</ol>
+<h2 id="小结">小结</h2><p>本篇文章主要从总体对动态渲染模式做了介绍，基于smarty的语言扩展实现的动态解析依赖关系，充分利用网络环境、用户设备特性和server服务实现最优的性能优化和静态资源代码管理方式。如果是其他动态语言，可以参考本文的思想进行改造实验。接下来两篇文章重点介绍现在手百使用的两种渲染模式：combo和seed。</p>
+<h2 id="扩展阅读">扩展阅读</h2><ul>
+<li><a href="/2016/06/24/前端资源动态渲染模式介绍之概览篇/" title="前端资源动态渲染模式介绍之概览篇">前端资源动态渲染模式介绍之概览篇</a></li>
+<li><a href="/2016/07/12/前端资源动态渲染模式介绍之combo篇/" title="前端资源动态渲染模式介绍之combo篇">前端资源动态渲染模式介绍之combo篇</a></li>
+<li><a href="/2016/07/24/前端资源动态渲染模式介绍之seed篇/" title="前端资源动态渲染模式介绍之seed篇">前端资源动态渲染模式介绍之seed篇</a>
+</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>在手百我们使用了一种动态管理静态资源的方式，在开发中通常打包工具在打包构建的时候根据页面依赖将所有的js或者css打成一个<code>app.js</code>或者<code>app.css</code>，这样的打包方式我们称之为「静态打包」，因为只能在项目发布构建的过程中一次性将页面用到的js或者css打包成一个文件，上完线之后就不能在拆分。</p>
+<p>这种「静态打包」的方式有个弊端：如果在多个view的页面，是不能够充分利用不同页面之间的公用代码（模块）。于是加强版就是在线统计一个网站（项目）模块依赖和公用的代码，然后设置一个阈值，利用统计的数据，分析出多个页面高频使用的公共代码，再下次上线的时候，将这部分代码打包在一起。这种方式百度内部也有类似的解决方案，但是这种方案也没有充分发挥出细粒度模块的作用，而且实现相对来说比较麻烦，需要长期数据统计支持。</p>
+<p>今天我介绍下手百中我们实现的一种动态管理静态资源的方式，我将它称之为「前端资源动态渲染模式」，简称「渲染模式」。这种方式是基于手百现有业务出发的，解决了手百不同平台（安卓、ios、winphone）的代码差异，而且充分利用缓存、combo服务，做到可配方便调试的目的。</p>
+<h2 id="前端资源动态渲染模式特点">前端资源动态渲染模式特点</h2><blockquote>
+<p>代码永远只写一份，不需要编写特殊逻辑</p>
+</blockquote>
+<p>我们实现的渲染模式，对于代码开发者来说，不需要做特殊的逻辑编写，只需要按照正常编码要求来写代码，剩下的就交给打包工具和上线流程，对于初学者不需要任何的学习门槛，而且支持本地静态资源和外部静态资源混用。</p>
+<blockquote>
+<p>能够根据不同平台，不同后端业务逻辑，动态打包不同代码</p>
+</blockquote>
+<p>后端业务逻辑不通，则需要的js或者css文件不通，之前的做法是一个js里面包含了所有的代码逻辑，现在只需要如下代码：</p>
+<pre><code class="smarty">{% if($isiOS) %}
+    {% require name="life:ios/invoke.js" %}
+{%else%}
+    {% require name="life:android/invoke.js" %}
+{% endif%}
+</code></pre>
+<p>这个是动态逻辑解析后的执行，所以编译阶段的静态打包是完全解决不了这个问题的。</p>
+<blockquote>
+<p>结合combo服务或者localstorage做缓存优化</p>
+</blockquote>
+<p>利用静态资源的combo服务和浏览器的localstorage存储，我们可以把渲染模式进一步优化，最简单的方式是combo渲染模式，动态分析完页面依赖之后，将url拼接成combo url一次输出<br>]]>
+    
+    </summary>
+    
+      <category term="资源管理" scheme="http://js8.in/tags/%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86/"/>
+    
+      <category term="渲染模式" scheme="http://js8.in/tags/%E6%B8%B2%E6%9F%93%E6%A8%A1%E5%BC%8F/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[学习iOS：使用CocoaPods管理iOS包依赖]]></title>
+    <link href="http://js8.in/2016/05/23/%E5%AD%A6%E4%B9%A0iOS%EF%BC%9A%E4%BD%BF%E7%94%A8CocoaPods%E7%AE%A1%E7%90%86iOS%E5%8C%85%E4%BE%9D%E8%B5%96/"/>
+    <id>http://js8.in/2016/05/23/学习iOS：使用CocoaPods管理iOS包依赖/</id>
+    <published>2016-05-23T14:16:25.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>iOS的生态中CocoaPods是包依赖管理工具，等同于node生态中的npm，OSX中的brew，linux的apt-get、yum这些工具，下面介绍下CocoaPods的安装和基本使用方法</p>
+<h2 id="安装">安装</h2><p>首先要有ruby（Mac自带哦~），然后执行gem</p>
+<pre><code class="bash">sudo gem install cocoapads
+pod setup
+</code></pre>
+<p>这时候估计会报：<code>Operation not permitted - /usr/bin/xcodeproj</code>错误，需要执行下面的操作：</p>
+<pre><code class="bash"> mkdir -p $HOME/Software/ruby
+$ export GEM_HOME=$HOME/Software/ruby
+$ gem install cocoapods
+[...]
+1 gem installed
+$ export PATH=$PATH:$HOME/Software/ruby/bin
+$ pod --version
+1.0.0
+</code></pre>
+<p>我是修改了<code>.bash_profile</code>（zsh修改.zshrc），将<code>export GEM_HOME=$HOME/Software/ruby</code>放进去，把<code>$HOME/Software/ruby/bin</code>加入<code>PATH</code>。这时候在再执行<code>gem install cocoapads</code> 就不会报错了。</p>
+<p><code>pod setup</code>在执行时，会输出<code>Setting up CocoaPods master repo</code>，但是会等待比较久的时间。这步其实是 Cocoapods 在将它的信息下载到 <code>~/.cocoapods</code>目录下，如果你等太久，可以试着 cd 到那个目录，用<code>du -sh *</code>来查看下载进度。你也可以参考下面的 <strong>使用 cocoapods 的镜像索引</strong> 一节的内容来提高下载速度。</p>
+<h3 id="使用_CocoaPods_的镜像索引">使用 CocoaPods 的镜像索引</h3><p>所有的项目的 Podspec 文件都托管在<code>https://github.com/CocoaPods/Specs</code>。第一次执行pod setup时，CocoaPods 会将这些podspec索引文件更新到本地的 <code>~/.cocoapods/</code>目录下，这个索引文件比较大，有 80M 左右。所以第一次更新时非常慢，笔者就更新了将近 1 个小时才完成。<br>一个叫 <a href="http://akinliu.github.io/2014/05/03/cocoapods-specs-/" target="_blank" rel="external">akinliu</a> 的朋友在 gitcafe 和 oschina 上建立了 CocoaPods 索引库的镜像，因为 gitcafe 和 oschina 都是国内的服务器，所以在执行索引更新操作时，会快很多。如下操作可以将 CocoaPods 设置成使用 gitcafe 镜像：</p>
+<pre><code class="bash">pod repo remove master
+pod repo add master https://gitcafe.com/akuandev/Specs.git
+pod repo update
+</code></pre>
+<p>将以上代码中的 <a href="https://gitcafe.com/akuandev/Specs.git" target="_blank" rel="external">https://gitcafe.com/akuandev/Specs.git</a> 替换成 <a href="http://git.oschina.net/akuandev/Specs.git" target="_blank" rel="external">http://git.oschina.net/akuandev/Specs.git</a> 即可使用 oschina 上的镜像。</p>
+<h2 id="使用CocoaPads管理iOS依赖">使用CocoaPads管理iOS依赖</h2><p>CocoaPads的基本命令是<code>pod</code>，常用的方法如下</p>
+<ul>
+<li>初始化：进入项目路径 <code>pod init</code></li>
+<li>安装：<code>pod MODULE_NAME</code></li>
+<li>安装特定版本的依赖：<code>pod MODULE_NAME, 版本</code>，例如：<code>pod &#39;Objection&#39;, &#39;0.9&#39;</code></li>
+<li>更新 <code>pod update</code></li>
+<li>搜索 <code>pod search MODULE_NAME</code></li>
+</ul>
+<h2 id="Podfile介绍">Podfile介绍</h2><p>在<code>pod init</code>的时候会在你项目中创建一个<code>Podfile</code> 文件，很类似npm的 <code>package.json</code>，如果一个项目中已经有了<code>Podfile</code>， 就可以直接进入该目录然后执行 <code>pod install</code>，就会安装上<code>Podfile</code>中的依赖包</p>
+<h2 id="Podfile-lock介绍">Podfile.lock介绍</h2><p>执行<code>pod install</code>之后会生成<code>Podfile.lock</code>放在目录中，为了保证每次执行<code>pod install</code>的版本一致性，所以建议把<code>Podfile.lock</code>放入版本库维护，如果需要更新某个包的版本，执行<code>pod update</code>，则<code>Podfile.lock</code>文件会发生变化，记得提交到版本库</p>
+<h2 id="参考文章">参考文章</h2><ul>
+<li><a href="https://guides.cocoapods.org/" target="_blank" rel="external">https://guides.cocoapods.org/</a></li>
+<li><a href="http://blog.devtang.com/2014/05/25/use-cocoapod-to-manage-ios-lib-dependency/" target="_blank" rel="external">http://blog.devtang.com/2014/05/25/use-cocoapod-to-manage-ios-lib-dependency/</a></li>
+<li><a href="http://studentdeng.github.io/blog/2013/09/13/cocoapods-tutorial/" target="_blank" rel="external">http://studentdeng.github.io/blog/2013/09/13/cocoapods-tutorial/</a></li>
+<li><a href="https://github.com/CocoaPods/CocoaPods/issues/3692" target="_blank" rel="external">https://github.com/CocoaPods/CocoaPods/issues/3692</a></li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>iOS的生态中CocoaPods是包依赖管理工具，等同于node生态中的npm，OSX中的brew，linux的apt-get、yum这些工具，下面介绍下CocoaPods的安装和基本使用方法</p>
+<h2 id="安装">安装</h2><p>首先要有ruby（Mac自带]]>
+    </summary>
+    
+      <category term="iOS" scheme="http://js8.in/tags/iOS/"/>
+    
+      <category term="CocoaPods" scheme="http://js8.in/tags/CocoaPods/"/>
+    
+      <category term="iOS开发" scheme="http://js8.in/categories/iOS%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[手机百度移动适配切图解决方案介绍]]></title>
+    <link href="http://js8.in/2015/12/12/%E6%89%8B%E6%9C%BA%E7%99%BE%E5%BA%A6%E7%A7%BB%E5%8A%A8%E9%80%82%E9%85%8D%E5%88%87%E5%9B%BE%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88%E4%BB%8B%E7%BB%8D/"/>
+    <id>http://js8.in/2015/12/12/手机百度移动适配切图解决方案介绍/</id>
+    <published>2015-12-12T07:36:13.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>我们知道移动开发上面有个设备像素比：<code>window.devicePixelRatio</code>，现在在开发页面的时候，一定会在<code>head</code>中添加个<code>viewport</code>的<code>meta</code>类似下面的代码：</p>
+<pre><code class="html">&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no&quot;&gt;
+</code></pre>
+<p>但是随着手机屏幕越来越大，于是页面会遇见下面的问题，手机屏幕越大，右边留白越多，字体越小也不清晰，影响体验：</p>
+<p><img src="/slide/assets/flexible/5.png" alt="iPhone5页面"><br><img src="/slide/assets/flexible/6plus.png" alt="iPhone6 Plus页面"></p>
+<h2 id="介绍下REM">介绍下REM</h2><p>rem是以<code>document.documentElement</code>（即<code>&lt;html&gt;</code>标签）的<code>font-size</code>为基准的，举例说明：</p>
+<ul>
+<li>html的font-size：10px</li>
+<li>那么1rem = 10px</li>
+</ul>
+<h2 id="手百Rem切图方案">手百Rem切图方案</h2><p>为了切图方便，我们手百使用了Rem切图，首先类似淘宝的flexible方案，会在页面head中引入一个<code>flexible.js</code>。</p>
+<a id="more"></a>
+<p>为了计算方便，我们将<code>documentElement</code>的font-size设置为页面宽度的10%，代码如下：</p>
+<pre><code class="js">var docEl = document.documentElement;
+var width = docEl.getBoundingClientRect().width;
+var rem = width / 10;
+docEl.style.fontSize = rem + &#39;px&#39;;
+</code></pre>
+<p>同时配合js获取dpr动态设置的viewport。切图布局的时候，需要计算rem，为了方便我们使用sass写了一个<code>rem</code>函数和mixin：</p>
+<pre><code class="sass">$rem-baseline: 75px !default;
+@function rem-convert($to, $values...) {
+  $result: ();
+  $separator: rem-separator($values);
+
+  @each $value in $values {
+    @if type-of($value) == &quot;number&quot; and unit($value) == &quot;&quot;{
+        $value: $value * 1px;
+    }
+    @if type-of($value) == &quot;number&quot; and unit($value) == &quot;rem&quot; and $to == &quot;px&quot; {
+      $result: append($result, $value / 1rem * $rem-baseline, $separator);
+    } @else if type-of($value) == &quot;number&quot; and unit($value) == &quot;px&quot; and $to == &quot;rem&quot; {
+      $result: append($result, $value / ($rem-baseline / 1rem), $separator);
+    } @else if type-of($value) == &quot;list&quot; {
+      $result: append($result, rem-convert($to, $value...), $separator);
+    } @else {
+      $result: append($result, $value, $separator);
+    }
+  }
+
+  @return $result;
+}
+
+@function rem($values...) {
+  @if $rem-px-only {
+    @return rem-convert(px, $values...);
+  } @else {
+    @return rem-convert(rem, $values...);
+  }
+}
+
+@mixin rem($properties, $values...) {
+  @if type-of($properties) == &quot;map&quot; {
+    @each $property in map-keys($properties) {
+      @include rem($property, map-get($properties, $property));
+    }
+  } @else {
+    @each $property in $properties {
+      @if $rem-fallback or $rem-px-only {
+        #{$property}: rem-convert(px, $values...);
+      }
+      @if not $rem-px-only {
+        #{$property}: rem-convert(rem, $values...);
+      }
+    }
+  }
+}
+//
+.demo{
+    height: rem(300px);
+    @include rem(padding, 10px 20px);
+}
+</code></pre>
+<p>sass变量 <code>$rem-baseline</code> 是基准值，以设计图宽度/10为准，这样设计后，就可以直接用视觉稿的尺寸大小切图了。</p>
+<h3 id="举个例子">举个例子</h3><p>720px的视觉稿中有个360x360的div。</p>
+<h4 id="普通切图">普通切图</h4><p>使用普通方法切页面，设置：</p>
+<pre><code class="html">&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no&quot;&gt;
+</code></pre>
+<p>这样采用iPhone5为基准手机切图，需要计算：<code>需要切图的图层width/(视觉稿width/基准手机设备宽度)</code> 即：<code>360/(720/320)=160px</code></p>
+<h4 id="Rem切图">Rem切图</h4><ul>
+<li>设置<code>$rem-baseline</code>为720/10，即72px</li>
+<li>使用rem进行计算：<code>width: rem(360px)</code></li>
+</ul>
+<p><strong>算一算</strong></p>
+<ol>
+<li>html字体：1rem=640px/10=64px</li>
+<li>viewport：scale = 1/dpr = 0.5</li>
+<li>css的宽：360px/72px = 5rem</li>
+<li>5rem <em> 64px </em> 0.5 = 160px</li>
+</ol>
+<h2 id="字体问题">字体问题</h2><p>字体的大小是根据<code>&lt;body&gt;</code>标签的<code>font-size</code>，为了计算方便，<code>$font-baseline</code>设置为<code>12px</code>，所以需要根据不同的设备像素比设置不同的<code>font-size</code>，然后配合sass的mixin <code>fontsize</code>设置字体大小</p>
+<pre><code class="sass">[data-dpr=&quot;1&quot;] body{
+    font-size: $font-baseline;
+}
+[data-dpr=&quot;2&quot;] body{
+    font-size: $font-baseline * 2;
+}
+[data-dpr=&quot;2.5&quot;] body{
+    font-size: $font-baseline * 2.5;
+}
+[data-dpr=&quot;2.75&quot;] body{
+    font-size: $font-baseline * 2.75;
+}
+[data-dpr=&quot;3&quot;] body{
+    font-size: $font-baseline * 3;
+}
+.demo{
+    @include fontsize(24px);
+}
+</code></pre>
+<h2 id="总结">总结</h2><p>关于设备上面的切图就说到这里，想了解更多，看下我之前的内部分享：<a href="/slide/flexible.htm">移动适配切图方案</a></p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>我们知道移动开发上面有个设备像素比：<code>window.devicePixelRatio</code>，现在在开发页面的时候，一定会在<code>head</code>中添加个<code>viewport</code>的<code>meta</code>类似下面的代码：</p>
+<pre><code class="html">&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no&quot;&gt;
+</code></pre>
+<p>但是随着手机屏幕越来越大，于是页面会遇见下面的问题，手机屏幕越大，右边留白越多，字体越小也不清晰，影响体验：</p>
+<p><img src="/slide/assets/flexible/5.png" alt="iPhone5页面"><br><img src="/slide/assets/flexible/6plus.png" alt="iPhone6 Plus页面"></p>
+<h2 id="介绍下REM">介绍下REM</h2><p>rem是以<code>document.documentElement</code>（即<code>&lt;html&gt;</code>标签）的<code>font-size</code>为基准的，举例说明：</p>
+<ul>
+<li>html的font-size：10px</li>
+<li>那么1rem = 10px</li>
+</ul>
+<h2 id="手百Rem切图方案">手百Rem切图方案</h2><p>为了切图方便，我们手百使用了Rem切图，首先类似淘宝的flexible方案，会在页面head中引入一个<code>flexible.js</code>。</p>]]>
+    
+    </summary>
+    
+      <category term="webapp" scheme="http://js8.in/tags/webapp/"/>
+    
+      <category term="移动前端" scheme="http://js8.in/tags/%E7%A7%BB%E5%8A%A8%E5%89%8D%E7%AB%AF/"/>
+    
+      <category term="Rem" scheme="http://js8.in/tags/Rem/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[手机百度localstorage细粒度缓存介绍]]></title>
+    <link href="http://js8.in/2015/12/06/%E6%89%8B%E6%9C%BA%E7%99%BE%E5%BA%A6localstorage%E7%BB%86%E7%B2%92%E5%BA%A6%E7%BC%93%E5%AD%98%E4%BB%8B%E7%BB%8D/"/>
+    <id>http://js8.in/2015/12/06/手机百度localstorage细粒度缓存介绍/</id>
+    <published>2015-12-06T02:31:39.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<h2 id="写在前面">写在前面</h2><p>拖了一年多的文章，终于开始慢慢补上了。。。上周末整理了下hexo的模板，本周末写了2015年的第一篇文章。</p>
+<p>从14年开始，手机百度就开始支持localstorage的细粒度缓存，配合inline渲染模式使用，在2G慢速网站将页面的js和css嵌入到script和style标签，然后将源码存到localstorage，第二次访问的时候从localstorage读取，提高页面访问速度。</p>
+<h2 id="细粒度localstorage方案">细粒度localstorage方案</h2><p>传统的localstorage缓存，流程图如下：<br><img src="/img/posts/ls-1.png" alt="传统的localstorage缓存"></p>
+<p>最大的缺点是：<em>需要页面渲染之后，读取localstorage缓存内容，然后二次拉取没有缓存或需要更新的资源</em>。</p>
+<a id="more"></a>
+<p>还有一个方案，就是利用cookie保存一个版本号信息，server端拿到cookie就可以判断出来需要下发和更新的资源。这个方案虽然可以避免二次拉取，但是毕竟cookie的存储量有限，cookie太大就影响http上行请求速度。所以之前百度移动搜索结果页的方法就是整个页面存储一个md5的版本号，如果有一个资源更新，那么就需要整个页面的资源代码重新下发，所以往往每周上线的时候会引起页面性能数据抖动。</p>
+<p>所以结合上面的两种方式，手百这边做的是如下的方案：<br><img src="/img/posts/ls-2.png" alt="手百细粒度方案"></p>
+<h2 id="第一步：代码按照更新频度进行分组">第一步：代码按照更新频度进行分组</h2><p>上面提到的cookie方案最大的问题就是：业务代码和通用代码都“一视同仁”，这样经常频繁变化的业务代码只要发生变化，通用代码也需要更新，所以每周固定上线时间就会全部重新下发一遍代码。</p>
+<p>为了解决这个方案的缺点，首先将需要缓存的代码进行分层：<em>通用</em> 和 <em>业务</em>。通过区分通用和业务代码，每段代码都有自己的独立版本号，业务层代码的修改就不会引起通用代码的更新，只会更新自己的版本号，下发自己的新版本。</p>
+<h2 id="第二步：利用cookie的多维度">第二步：利用cookie的多维度</h2><p>大家都知道cookie是可以按照域名来缓存的，二级子域名可以读取主域名的cookie，这个我们称之为：<em>cookie的doman维度</em>。</p>
+<p>cookie除了域名之外，还有一个容易被忽略的维度，就是不同的 <code>path</code> cookie也可以不同，下一级<code>path</code>是可以读取上一级<code>path</code>的cookie。这个是cookie的第二个维度：<em>cookie的path维度</em></p>
+<p>下面例子是同一个cookie <code>po_lsv</code>在不同domain和path的情况。</p>
+<table>
+<thead>
+<tr>
+<th><em>key</em></th>
+<th><em>value</em></th>
+<th><em>domain</em></th>
+<th><em>path</em></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>po_lsv</td>
+<td>jZ-1_jA-1_cF-1_cM-1_jB-2</td>
+<td>po.m.baidu.com</td>
+<td>/tiny</td>
+</tr>
+<tr>
+<td>po_lsv</td>
+<td>jZ-1_jA-1_cF-1_cM-1_jB-1</td>
+<td>po.m.baidu.com</td>
+<td>/</td>
+</tr>
+<tr>
+<td>po_lsv</td>
+<td>jZ-1_jA-1_cF-1</td>
+<td>m.baidu.com</td>
+<td>/</td>
+</tr>
+</tbody>
+</table>
+<h2 id="保证cookie保存足够多的信息">保证cookie保存足够多的信息</h2><p>之前使用md5，cookie value的长度是32个长度，如果利用value足够短的长度保存足够多的cookie信息。我们的方法是使用如下约定：</p>
+<ol>
+<li>css和js分别使用c和j来打头</li>
+<li>localstorage的key和版本号使用<code>-</code>间隔，而每个版本之间使用<code>_</code>，保证cookie在encode的时候不被编码成<code>%xx</code>保证长度</li>
+<li>真实localstorage的值，使用尽量一个字母简写</li>
+<li>而版本号使用的是36进制，如果每周上线一次计算，加上cookie有效期，36进制保证版本号是一位已经足够了，不用考虑版本号重叠问题</li>
+</ol>
+<h2 id="自动打包工具">自动打包工具</h2><p>维护版本号是很麻烦的一个工作，如果一不留神漏了哪个，就会导致重大bug，比如页面一直reload等，所以我们使用了打包工具来完成这个过程，避免了人工的错误。</p>
+<p>打包过程如下：<br><img src="/img/posts/ls-3.png" alt="localstorage.json"></p>
+<p><code>localstorage.json</code>的格式内容如下：</p>
+<pre><code class="json">{
+    &quot;jA&quot;: {
+        &quot;hash&quot;: &quot;2c79d70&quot;,
+        &quot;files&quot;: [
+            &quot;common:widget/localstorage/zepto-ajax.tpl&quot;
+        ],
+        &quot;version&quot;: 1
+    },
+    &quot;jZ&quot;: {
+        &quot;hash&quot;: &quot;5358395&quot;,
+        &quot;files&quot;: [
+            &quot;common:widget/localstorage/zepto.tpl&quot;
+        ],
+        &quot;version&quot;: 1
+    }
+}
+</code></pre>
+<p>需要缓存到localstorage的文件都统一放在localstorage文件夹，再看下需要缓存的widget经过打包工具自动生成的代码：</p>
+<pre><code class="html">&lt;script data-lsid=&quot;jZ&quot;&gt;
+    __inline(&#39;/static/js/zepto.js&#39;);
+&lt;/script&gt;
+</code></pre>
+<p>经过打包工具release之后，变成下面的smarty模板：</p>
+<pre><code class="html">{%if ($_ls_nonsupport) || ($_parsedLSCookies.jZ.isUpdate )%}
+    &lt;script data-lsv=&quot;{%$_parsedLSCookies.jZ.version|escape:html%}&quot;  data-lsid=&quot;jZ&quot;&gt;
+    var Zepto=xxx
+    &lt;/script&gt;
+{%else%}
+    &lt;script&gt;LS.exec(&quot;jZ&quot;,&quot;js&quot;);&lt;/script&gt;
+{%/if%}
+</code></pre>
+<p>代码执行时候，解析cookie，然后读取localstroage.json的内容，跟cookie的版本号对比，生成模板变量，赋值给模板文件。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<h2 id="写在前面">写在前面</h2><p>拖了一年多的文章，终于开始慢慢补上了。。。上周末整理了下hexo的模板，本周末写了2015年的第一篇文章。</p>
+<p>从14年开始，手机百度就开始支持localstorage的细粒度缓存，配合inline渲染模式使用，在2G慢速网站将页面的js和css嵌入到script和style标签，然后将源码存到localstorage，第二次访问的时候从localstorage读取，提高页面访问速度。</p>
+<h2 id="细粒度localstorage方案">细粒度localstorage方案</h2><p>传统的localstorage缓存，流程图如下：<br><img src="/img/posts/ls-1.png" alt="传统的localstorage缓存"></p>
+<p>最大的缺点是：<em>需要页面渲染之后，读取localstorage缓存内容，然后二次拉取没有缓存或需要更新的资源</em>。</p>]]>
+    
+    </summary>
+    
+      <category term="webapp" scheme="http://js8.in/tags/webapp/"/>
+    
+      <category term="移动前端" scheme="http://js8.in/tags/%E7%A7%BB%E5%8A%A8%E5%89%8D%E7%AB%AF/"/>
+    
+      <category term="性能优化" scheme="http://js8.in/tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[手机百度前端工程化之路]]></title>
+    <link href="http://js8.in/2014/05/28/%E6%89%8B%E6%9C%BA%E7%99%BE%E5%BA%A6%E5%89%8D%E7%AB%AF%E5%B7%A5%E7%A8%8B%E5%8C%96%E4%B9%8B%E8%B7%AF/"/>
+    <id>http://js8.in/2014/05/28/手机百度前端工程化之路/</id>
+    <published>2014-05-28T00:30:49.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>本文将围绕我半年来在移动前端工程化做的一些工作做的总结，主要从 <strong>localstorage缓存和版本号管理</strong> ， <strong>模块化</strong> ， <strong>静态资源渲染方式</strong> 三个方面总结手机百度前端一年内沉淀的解决方案，希望对大家移动开发有所帮助。</p>
+<h2 id="一年前存在的问题">一年前存在的问题</h2><p>可能因为之前项目节奏紧，人力不足原因，一部分phper承担了前端的工作，于是暴漏了一些问题。</p>
+<h3 id="粗暴的一刀切">粗暴的一刀切</h3><p>从第一次在厂子写代码开始，就被前辈告诉移动页面，所以的静态资源都要内嵌，即写在<code>script</code>和<code>style</code>内，这样的好处是，网络情况不好的时候，减少http请求。因为2G等网络不稳定的情况下，多开一个http请求，对手机资源消耗是巨大的，比如我们在手机信号不好的地方，访问网络，耗电量会急剧增高。</p>
+<p>但是随着3G，甚至4G的普及，实际统计显示，手机百度上2G用户不到30%，所以上面提到的这种<code>一刀切</code>的方案是不妥的。</p>
+<h3 id="不成规矩">不成规矩</h3><p>第二个问题是没有规范和模块化的问题。大家写码都是 <strong>意识流</strong> ，除了都是用<code>zepto.js</code>之外，没有沉淀下模块。碰到以前写过的代码，都是<code>ctrl+c</code> + <code>ctrl+v</code>。这种粗放的方式，虽然可以暂时解决问题，但是当出现之前的一段代码不能满足需求的时候（比如新版app发布，之前的代码需要做兼容和升级），需要遍历所有的代码，挨个修改，麻烦！</p>
+<a id="more"></a>
+<h3 id="高度耦合的工作流程">高度耦合的工作流程</h3><p>第三个问题是前端角色问题，现在组内的开发是前后端分离的，使用smarty模板，因为产品是hybridAPP，所以较传统前端，增加了客户端RD的联调成本。前端几乎都是在联调和等待的状态，跟后端联调smarty数据接口和客户端联调js接口。有时候必须要等接口出来联调通过了之后，才能继续写码，造成了人力的浪费。如何解放前端人力，解决开发联调耦合的问题迫在眉睫。</p>
+<h2 id="引入FIS解决方案">引入FIS解决方案</h2><p><strong>FIS</strong> 是厂子用的一套前端集成解决方案，从开发、调试到打包上线各个环节都覆盖了。用成龙大哥的话就是：“抱着试一试的心态，后来发现很黑很亮很柔。。。不管自己用，还推荐给其他团队使用。”</p>
+<p><a href="http://fex.baidu.com/" target="_blank" rel="external">Fex</a>那边很多文章在说FIS，我自己也写过一篇《<a href="http://mweb.baidu.com/p/fis%E5%92%8Cfisp%E4%BD%BF%E7%94%A8%E5%BF%83%E5%BE%97.html" target="_blank" rel="external">FIS和FISP的使用心得</a>》，所以这里就不赘余，直接重点说下我基于FIS做的一些解决方案。</p>
+<h2 id="解决联调成本">解决联调成本</h2><p>第一部分提到的高度耦合的工作流程，分别使用fis本地联调和chrome扩展来切断phper、crd跟fe的联调线路，达到提前自测，提前跑通整个流程。</p>
+<h3 id="FIS本地调试">FIS本地调试</h3><p>FIS的本地调试功能可以用于解决phper和FEer的问题，分别有模拟smarty模板数据，模拟Ajax接口等功能。我们将rewrite规则和联调的模拟数据，分别写在了<code>server.conf</code>和<code>test文件夹</code>下</p>
+<p>关于FIS的本地联调工作，就不多说了，<a href="http://fis.baidu.com/userdoc/%E5%BC%80%E5%8F%91%E8%B0%83%E8%AF%95#toc_11" target="_blank" rel="external">FIS的官网文档有详细的说明</a></p>
+<h3 id="chrome扩展模拟webview接口">chrome扩展模拟webview接口</h3><p>为了解决客户端注入js接口的方法，我们通过chrome扩展来实现了。通过chrome的content script方式，在页面渲染之前提前注入模拟webview的js，这样页面在下载渲染的时候在调用js接口就不会报错。</p>
+<p>除了模拟webview接口之外，还将手机百度APP开发中常用的工具，和调试功能都集成到这个chrome扩展中。总体的效果如下图：</p>
+<p><img src="/img/posts/20151128_2.png" alt="注入js模拟手机百度客户端js接口界面"></p>
+<p><img src="/img/posts/20151128_3.png" alt="选项页面之配置手机百度user-agent"></p>
+<p><img src="/img/posts/20151128_5.png" alt="icon点击popup页面，自动生成当前url二维码，方便手机访问"></p>
+<p><img src="/img/posts/20151128_6.png" alt=""></p>
+<p>chrome扩展的开发过程中，遇见了很多困难，最后通过查资料一一解决了，整个工具开发就用了一个周末的时间，之后是零零碎碎的需求。因为更新比较频繁，还引入了自动检测更新的功能。</p>
+<h2 id="内嵌静态资源做localstorage缓存">内嵌静态资源做localstorage缓存</h2><p>因为上面说的原因，页面用到的静态资源都是嵌入到页面中，这种渲染的方式我们叫做<strong>inline模式</strong>。</p>
+<p>inline模式每次都下发全量代码的方式的确蛋疼，影响页面速度。不难想到后来大家都用了localstorage来缓存inline的代码，这种渲染方式可以叫：<code>localstorage+inline</code>的方式。</p>
+<p>手机上的 webview 对 html5 的 localstorage做了不错的支持，经过我们抽样统计，手机百度的搜索结果页面用户中，大约有76%支持localstorage。嗯，做localstorage缓存。</p>
+<h3 id="localstorage缓存解决方案">localstorage缓存解决方案</h3><p>现在有很多localstorage的解决方案，是每次都下发一个版本号信息的config文件，页面加载完毕后，拿着这个config文件跟缓存的localstorage文件校验版本号，发现有有更新，则二次拉取新的内容，再缓存新内容和新版本号到localstorage。</p>
+<p>在移动上，我们想避免这次二次拉取，于是我们采用cookie的方式来存储版本号信息，这样一次访问，http请求头会将cookie带到后端，后端直接判断版本号，并且下发代码。</p>
+<p>具体方案如下：</p>
+<ul>
+<li>使用cookie记录localstorage版本号信息</li>
+<li>上线时通过打包工具，将所有需要缓存的文件依次计算md5值之和string，然后对string取md5作为版本号</li>
+<li>用户访问页面的时候，将cookie带给后端程序，判断两个版本号是否相等，如果不相等就下发全量代码</li>
+<li>前端负责判断localstorage支持情况，不支持则写一个特定cookie值，支持则写入localstorage版本号</li>
+<li>cookie过期时间是一周</li>
+</ul>
+<p>当然，这种解决方案相对简单，相信很多移动前端团队也在使用，也会有人说：“我们都用外链。” 前面说了，我们产品网络比较复杂，只能为了2G用户做了妥协</p>
+<h3 id="上面解决方案的问题">上面解决方案的问题</h3><p>上线之后，因为页面内嵌的js和css都缓存到localstorage，页面大小变小了，的确用户访问速度有了很大的提高。嗯，看上去很好~</p>
+<p>但是，这又是一个 <strong>一刀切</strong> 的方案：</p>
+<ul>
+<li>业务层代码和基础层代码级别一样：像zepto这种一年更新一次都算多的基础层代码，会因为业务逻辑代码频发更改而重新下发</li>
+<li>对于一个域名只有一个页面的页面是个好办法，页面多了，公共的代码就少了</li>
+<li>对于一个版本号来说，不能将所有的页面缓存代码都控制住，最后的结果就是在不停的权衡究竟缓存的是什么</li>
+</ul>
+<p>现在也许部分童鞋就想到了，为啥不多存几个版本号cookie，那样不就可以多缓存一些代码吗？</p>
+<p>cookie多了，http请求头会变大，http请求头太大，会对速度产生很大影响，当cookie总量超过800字节，速度会陡升，加上我们用的域名很多兄弟团队都在使用，如果放开口子任其发展，最后一定会一发不可收拾。</p>
+<p>PS：年前参与一个速度优化项目，其中一个优化方式就是减少cookie，减少请求头中的cookie，在慢速网络的速度提升有明显提高！</p>
+<p>ok，继续探索……</p>
+<h3 id="localstorage细粒度缓存">localstorage细粒度缓存</h3><p>上面的localstorage版本号解决方案，是将md5值存在一个cookie，一个md5值32位，即使使用一半也16位，加上cookie的key，怎么也要20个字节以上，我们能不能利用20~100个字节，尽量缓存更多的缓存文件版本号信息呢？</p>
+<p>于是我们开始了localstorage版本号细化的工作。</p>
+<ol>
+<li>梳理可以缓存的静态资源，将文件分为：基础层、通用层和业务逻辑层，缓存的主要是基础层和通用层的代码</li>
+<li>指定cookie的value值格式，为了缓存更多的版本号信息，我们不再使用md5做版本号信息，而是规定了下面的格式：jA-V_cB-V，即jA和cB代表缓存的文件名，保持两位（j代表js，c代表css，t代表前端js模板文件，）；V代表版本号，保持一位，版本号是36进制的，当版本号要超过一位时，从0开始重新记录；按照每周上线一次的情况，cookie时间是一周，36个版本号可以够我们用的</li>
+<li>需要缓存的文件统一放在一个路径下管理</li>
+</ol>
+<p>这样做了之后，就是用脚本做缓存文件自动更新版本号了，开始想到的是通过svn hook的方式，当有新的ci时，计算md5值，写入一个版本号config文件。上线时比较线上config和svn中的config，如果不一样就升版本号。但是每次ci都做一次的方式又多此一举、略显蛋疼，最终的方案是在上线脚本中做了一些工作，没有使用svn hook：</p>
+<ol>
+<li>对缓存文件路径下的文件做md5，生成一张map</li>
+<li>去线上拉取最新的版本号config文件，跟第一步生成的map做比较，不一样则版本升高</li>
+</ol>
+<h3 id="localstorage多维度缓存">localstorage多维度缓存</h3><p>上面的解决方案还是不够完美，总感觉存的东西还是少，所以又做了一个 <strong>多维度cookie版本方案</strong> 。</p>
+<p>我们把cookie看成可以两个维度来存储： <strong>域名</strong> 和 <strong>路径</strong> 。</p>
+<h4 id="举例">举例</h4><p>域名A.baidu.com下，有三个产品：新闻、视频和小说，分别放在三个path：</p>
+<ul>
+<li>A.baidu.com/news</li>
+<li>A.baidu.com/video</li>
+<li>A.baidu.com/novel</li>
+</ul>
+<p>那么新闻、视频和小说，各自有各自的通用代码，比如：通用样式，通用js组件。这样我们在设置cookie的时候指定相应的path，则可以实现多维度缓存</p>
+<h3 id="开启localstorage缓存">开启localstorage缓存</h3><p>为了实现localstorage的缓存，我们增加了<code>FISLocalstorage</code>类来处理cookie，下发缓存代码，将FIS扩展smarty的 <code>&lt;%html%&gt;</code> 标签进行了修改，增加了<code>localstorage</code>属性，即下面代码就可以将页面开启缓存：</p>
+<pre><code class="smarty">&lt;%html localstorage=&quot;true&quot;%&gt;
+//something~
+&lt;%/html%&gt;
+</code></pre>
+<h3 id="模块化">模块化</h3><p>为了解决重复代码的问题，我们开始结合FIS来做模块化，像seajs、requirejs这些CMD、AMD框架，是后加载的，即用什么就拉取什么，属于异步模块。js为了实现异步模块，而大量的代码在处理模块依赖关系。在移动上，我们不希望这样，我们希望在后端维护模块的依赖关系，当我require一个模块的时候，会按照依赖关系，依次输出。</p>
+<p>我写了一个Bdbox的AMD规范的模块化基础库，然后在FIS编译时，包裹AMD的<code>define</code>外层，并且可以生成一张加载资源表，当使用<code>&lt;%widget%&gt;</code>、<code>&lt;%require%&gt;</code>和<code>&lt;%script%&gt;标签内使用require</code>这些smarty扩展标签时，会通过php来动态维护模块依赖。</p>
+<p>关于FIS的模块化和静态资源管理，厂子FIS开发团队同学有一篇文章《<a href="http://fex.baidu.com/blog/2014/04/fis-static-resource-management" target="_blank" rel="external">如何高效地管理网站静态资源</a>》</p>
+<h3 id="模块化举例">模块化举例</h3><p>现在页面要引入 <code>moduleA</code> 模块，而 <code>moduleA</code> 依赖于 <code>moduleB</code> 和 <code>moduleC</code> ，<code>moduleB</code> 和 <code>moduleC</code> 又有自己的依赖模块，如果不先输出 <code>moduleB</code> 和 <code>moduleC</code> 的依赖模块，直接执行 <code>moduleA</code> 的 <code>define</code> 函数会报错的，因为 <code>moduleA</code> 模块依赖的<code>moduleB</code> 和 <code>moduleC</code> 还没有达到 <code>ready</code> 的状态。</p>
+<p>有时候甚至更加复杂的依赖关系：<br><img src="http://bcs.duapp.com/mbuweb/2014-05-23_225322.png" alt="moduleA的依赖关系"></p>
+<p>这时候通过《<a href="http://fex.baidu.com/blog/2014/04/fis-static-resource-management" target="_blank" rel="external">如何高效地管理网站静态资源</a>》文章提到的，FIS编译后会得到的模块依赖关系表：<code>map.json</code>，来做动态模块依赖管理。</p>
+<p>通过修改fis编译脚本，将模块依赖文件内容放到<code>map.json</code>中，当使用smarty扩展语法标签的时，php会自动读取<code>map.json</code>，然后将依赖解析出来，提前将moduleA依赖的模块都在其 <code>code&gt;define</code> 之前引入，所以下面的两种代码写法：</p>
+<pre><code class="smarty">&lt;%require name=&quot;common:bdbox/moduleA&quot;%&gt;`
+&lt;%*或者*%&gt;
+&lt;%script%&gt;
+    var moduleA = require(&#39;common:bdbox/moduleA&#39;);
+&lt;%/script%&gt;
+</code></pre>
+<p>实际输出的html代码是：</p>
+<pre><code class="html">&lt;script&gt;
+    define(&#39;common:bdbox/moduleB&#39;, function(){
+        //A依赖模块B
+    });
+    define(&#39;common:bdbox/moduleC&#39;, function(){
+        //A依赖模块C
+    });
+    define(&#39;common:bdbox/moduleA&#39;, function(){
+        //模块A
+        var C = require(&#39;common:bdbox/moduleC&#39;);
+        var B = require(&#39;common:bdbox/moduleA&#39;);
+    });
+    var moduleA = require(&#39;common:bdbox/moduleA&#39;);
+&lt;/script&gt;
+</code></pre>
+<p>对于不是模块的js或者css文件，如果使用了<code>&lt;%require%&gt;</code>，则主动使用<code>file_get_contents</code>来读取内容。</p>
+<h3 id="Q_&amp;_A">Q &amp; A</h3><ul>
+<li>为啥不直接用seajs和requirejs？<ul>
+<li>太大，逻辑复杂，不适合移动页面</li>
+</ul>
+</li>
+<li>为啥不用FIS自己的modjs，而自己重复造轮子？<ul>
+<li>Bdbox不仅仅是个AMD库，还是一个基础库，维护命名空间和工具类</li>
+</ul>
+</li>
+<li>为什么命名不是标准的AMD规范？<ul>
+<li>命名中的<code>common:bdbox/moduleA</code>，common是命名空间，一个项目会由很多页面模块（此模块是产品template模块，不是前端模块）组成，通过命名空间可以快速定位对应的map.json， 而<code>bdbox/moduleA</code>是实际的AMD模块名</li>
+</ul>
+</li>
+</ul>
+<h2 id="静态资源引入模式">静态资源引入模式</h2><p>上面所有的关于静态资源管理的解决方案，都是围绕 <strong>一刀切</strong> 的方案在做优化，而没有利用http本身的cache，实际上：在3G、wifi甚至4G的环境中，http cache的方案，在易用性和兼容性上面要比<code>localstorage+inline</code>内嵌静态资源的方式要好。</p>
+<p>而且从手机百度真实的用户网络类型统计来说，3G+wifi已经达到75%以上，如果能结合wise团队提供的ip测速库和公司的CDN服务，会有一种更好的解决方案，进一步来说，如果可以根据网络类型和用户真实网络速度，自由选择在<code>localstorage+inline</code>和CDN方案之间切换就更好了。于是我们做到了！一种新的渲染方式出现了：<code>CDN+combo</code>。</p>
+<p>再说这种渲染方式之前，先梳理下上面提到的一些名词：</p>
+<ul>
+<li><strong>inline模式</strong> ：即所有的静态资源都内嵌到页面，最古老的一刀切方案</li>
+<li><strong>tag模式</strong> ：即使用script和link标签，引入外链的js和css，pc上面常用，2G满网速不适合</li>
+<li><strong>localstorage+inline模式</strong> ：<code>一刀切</code>的优化版，将inline的公共静态资源利用html5 的localstorage缓存做本地存储</li>
+<li><strong>CDN+combo模式</strong> ：即利用tag模式，将资源外链，结合CDN和http cache做好缓存，combo提供模块化代码的打包合并服务</li>
+</ul>
+<p>好，继续那模块化说的moduleA模块依赖moduleB和moduleC来说，经过 <strong>tag模式</strong> ，会输出下面的html：</p>
+<pre><code class="html">&lt;script src=&quot;http://xxx/bdbox/moduleC.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;http://xxx/bdbox/moduleB.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;http://xxx/bdbox/moduleA.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+    var moduleA = require(&#39;common:bdbox/moduleA&#39;);
+&lt;/script&gt;
+</code></pre>
+<p>这样模块化的代码经常成了网页的瓶颈，因为模块化存在，造成了更多的外链！下面我们需要一个CDN+combo服务，来合并http请求。</p>
+<p>因为smarty的扩展语法，结合之前生成的<code>map.json</code>，我们实现了模块化依赖关系后端自动处理依赖，然后选择最合理的输出顺序。这时候我们不是直接输出对应的tag或者inline内容，而是将它合并到一个combo服务对应的URL，统一输出！</p>
+<pre><code class="html">&lt;script src=&quot;cdn-combo-server?file=bdbox/moduleC,bdbox/moduleB,bdbox/moduleA&quot;&gt;&lt;/script&gt;
+</code></pre>
+<h3 id="渲染模式智能切换">渲染模式智能切换</h3><p>如何根据用户网络环境智能切换渲染方式呢？我继续改造了smarty的<code>&lt;%html%&gt;</code>标签，添加属性<code>rendermode</code>，通过wise测速库和手机百度客户端传给我们的网络类型，选择不同的rendermode方式：</p>
+<pre><code class="smarty">&lt;%if ($slow_network || $nettype==&#39;2G&#39;) &amp;&amp; $support_localstorage %&gt;
+    &lt;%html rendermode=&quot;inline&quot; localstorage=&quot;true&quot;%&gt;
+&lt;%elseif $fast_network%&gt;
+    &lt;%html rendermode=&quot;combo&quot;%&gt;
+&lt;%else%&gt;
+    &lt;%html rendermode=&quot;inline&quot;%&gt;
+&lt;%/if%&gt;
+//……
+&lt;%/html%&gt;
+</code></pre>
+<h2 id="拆分父子模板">拆分父子模板</h2><p>上面的方案，我们如果逐个页面去写代码，改方案，想想就蛋疼，所以我们拆分了父子模板，从框架本身来分，一个module对应一个父模板，其他子模板使用smarty的extends标签实现继承关系。</p>
+<p>经过模板拆分后，子模板专注于做业务，父模板专注于做解决方案，而且也方便了抽样和统计。</p>
+<h2 id="其他">其他</h2><ul>
+<li>规范方面，已经整理了详细的编码规范和js常见编码问题；</li>
+<li>引入jslint和csshint对代码质量进行把控</li>
+<li>前端文档，在js代码中增加jsdoc规范的注释，自动通过jsdoc生成前端文档</li>
+</ul>
+<h2 id="总结">总结</h2><ul>
+<li>FIS带给我们一整套的前端继承解决方案，是上面所有解决方案的骨架</li>
+<li>开发流程上，通过工具来解耦，减少联调等待时间，提高前端工作效率</li>
+<li>父子模板拆分，有利于父模板做解决方案</li>
+<li>拒绝一刀切的解决方案，做可扩展的解决方案</li>
+<li>最后，我们把上面所有的解决方案都放在一个单独的前端common模块中</li>
+</ul>
+<p>试想一下，如果2015年，用户都用上了4G，那么我们需要将父模板的rendermode改成 <code>rendermode=&quot;combo&quot;</code> 就可以全部切到 <code>CDN+combo</code> 的渲染方式上，这得减少了多少工作量啊:)</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>本文将围绕我半年来在移动前端工程化做的一些工作做的总结，主要从 <strong>localstorage缓存和版本号管理</strong> ， <strong>模块化</strong> ， <strong>静态资源渲染方式</strong> 三个方面总结手机百度前端一年内沉淀的解决方案，希望对大家移动开发有所帮助。</p>
+<h2 id="一年前存在的问题">一年前存在的问题</h2><p>可能因为之前项目节奏紧，人力不足原因，一部分phper承担了前端的工作，于是暴漏了一些问题。</p>
+<h3 id="粗暴的一刀切">粗暴的一刀切</h3><p>从第一次在厂子写代码开始，就被前辈告诉移动页面，所以的静态资源都要内嵌，即写在<code>script</code>和<code>style</code>内，这样的好处是，网络情况不好的时候，减少http请求。因为2G等网络不稳定的情况下，多开一个http请求，对手机资源消耗是巨大的，比如我们在手机信号不好的地方，访问网络，耗电量会急剧增高。</p>
+<p>但是随着3G，甚至4G的普及，实际统计显示，手机百度上2G用户不到30%，所以上面提到的这种<code>一刀切</code>的方案是不妥的。</p>
+<h3 id="不成规矩">不成规矩</h3><p>第二个问题是没有规范和模块化的问题。大家写码都是 <strong>意识流</strong> ，除了都是用<code>zepto.js</code>之外，没有沉淀下模块。碰到以前写过的代码，都是<code>ctrl+c</code> + <code>ctrl+v</code>。这种粗放的方式，虽然可以暂时解决问题，但是当出现之前的一段代码不能满足需求的时候（比如新版app发布，之前的代码需要做兼容和升级），需要遍历所有的代码，挨个修改，麻烦！</p>]]>
+    
+    </summary>
+    
+      <category term="手机开发" scheme="http://js8.in/tags/%E6%89%8B%E6%9C%BA%E5%BC%80%E5%8F%91/"/>
+    
+      <category term="webapp" scheme="http://js8.in/tags/webapp/"/>
+    
+      <category term="移动前端" scheme="http://js8.in/tags/%E7%A7%BB%E5%8A%A8%E5%89%8D%E7%AB%AF/"/>
+    
+      <category term="性能优化" scheme="http://js8.in/tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[kindle paperwhite2 越狱后优化]]></title>
+    <link href="http://js8.in/2013/12/31/kindle-paperwhite2-%E8%B6%8A%E7%8B%B1%E5%90%8E%E4%BC%98%E5%8C%96/"/>
+    <id>http://js8.in/2013/12/31/kindle-paperwhite2-越狱后优化/</id>
+    <published>2013-12-31T06:53:24.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>上篇已经说了怎么越狱，因为我的pw2是日版的，发现很耗电，删除了很多书了，还是三四天就开始出没电报警了。通过越狱后可以关掉索引，这样耗电量就小好多了，到现在一周了，电量还没消耗掉50%（最近一天看书2小时左右），这对于我来说已经很满意了。</p>
+<h2 id="ssh登录kindle">ssh登录kindle</h2><p>按照<a href="http://js8.in/2013/12/29/kindle-paperwhite2-542%E8%B6%8A%E7%8B%B1/">上篇</a>操作，越狱之后 ，在搜索输入框内输入<code>;711</code> 就可以看到自己现在wifi的ip。</p>
+<h3 id="生成SSH密钥">生成SSH密钥</h3><p>为了每次方便，我使用了<code>puttygen.exe</code>生成了ssh密钥。操作跟github的一样，打开<code>puttygen.exe</code>，点击<code>Generate</code> 然后鼠标在key下面来回晃动，生成一个key，将生成的key复制，保存为：<code>authorized_keys</code>。点击<code>save private key</code>，将生成的密钥保存在硬盘上，例如：<code>c:\private-key-for -kpw.ppk</code>。</p>
+<p>usb连上kindle，放在<code>usbnet/etc</code>文件夹下。</p>
+<h3 id="SSH连接kindle">SSH连接kindle</h3><p>按照<a href="http://js8.in/2013/12/29/kindle-paperwhite2-542%E8%B6%8A%E7%8B%B1/">上篇</a>中【安装USBNetwork】操作，打开wifi连接ssh。使用<code>;711</code>查询出kindle在现在网络的ip。</p>
+<p>打开winscp，新建一个ssh会话，例如：sftp://192.168.xxx.xxx，用户名是root，端口22，用户密钥文件，选择上面保存的ppk地址，例如<code>c:\private-key-for -kpw.ppk</code></p>
+<p>然后点击登录，就可以登录kindle了。</p>
+<h2 id="关闭索引">关闭索引</h2><p>kindle的索引是不停的在后台建立的，当书籍比较多或者书比较大的情况下，一般会碰见卡索引的问题，这时候需要关闭索引了，减少耗电！个人认为索引是比较鸡肋的功能。因人而异哈~</p>
+<p>ssh连上kindle之后，执行</p>
+<a id="more"></a>
+<pre><code class="bash">mntroot rw
+/etc/upstart/framework stop
+vi etc/upstart/framework
+</code></pre>
+<p>编辑文件，查找<code>DENABLE_SEARCH_INDEXING_THREAD=true</code>，将后面的<code>true</code>改成<code>false</code>，保存退出。在执行：</p>
+<pre><code class="bash">mntroot ro
+/etc/upstart/framework start
+</code></pre>
+<h3 id="删除多余语言包，节省资源">删除多余语言包，节省资源</h3><p>/usr/java/bin/cvm 这个进程加载了很多jar包，从名字上看还都是语言包。可以将不用的语言包暂时转移出去，转移之前要做好备份哦</p>
+<p>下面是转移的shell:</p>
+<pre><code class="bash">#!/bin/sh
+
+/etc/upstart/framework stop
+
+cd /opt/amazon/ebook/lib
+mkdir -p /mnt/us/.backup/opt/amazon/ebook/lib
+mv *de_DE.jar /mnt/us/.backup/opt/amazon/ebook/lib/
+mv *es_ES.jar /mnt/us/.backup/opt/amazon/ebook/lib/
+mv *fr_FR.jar /mnt/us/.backup/opt/amazon/ebook/lib/
+mv *it_IT.jar /mnt/us/.backup/opt/amazon/ebook/lib/
+mv *ja_JP.jar /mnt/us/.backup/opt/amazon/ebook/lib/
+mv *pt_BR.jar /mnt/us/.backup/opt/amazon/ebook/lib/
+
+/etc/upstart/framework start
+
+reboot
+</code></pre>
+<p>保存在kindle上，然后执行下上面的shell就可以了<br>先在<code>mnt/us</code>下面建立一个.backup文件夹，用于备份，<code>mnt/us</code>就是平时使用usb链接kindle后的文件夹。</p>
+<h2 id="禁止OTA">禁止OTA</h2><p>编辑 <code>/etc/upstart/ota-update.conf</code>，在<code>source /etc/upstart/functions</code>下面添加</p>
+<pre><code class="bash">############## DISABLE OTA UPDATES ##############
+if [ -e &quot;/mnt/us/DISABLE_OTA&quot; ]
+then
+f_log E ota-update check &quot;&quot; &quot;####################################################&quot;
+f_log E ota-update check &quot;&quot; &quot;# UPDATES DISABLED in /etc/upstart/ota-update.conf #&quot;
+f_log E ota-update check &quot;&quot; &quot;# REMOVE FILE /mnt/us/DISABLE_OTA (in USB root) #&quot;
+f_log E ota-update check &quot;&quot; &quot;####################################################&quot;
+return $ERR_LOW_BAT
+fi
+############## DISABLE OTA UPDATES ##############
+</code></pre>
+<p>如果要禁用OTA，那么在usb链接kindle后，在根目录放一个<code>DISABLE_OAT</code>就好了，如果没有这个文件，就不会禁用OTA，很方便哦</p>
+<h2 id="更换屏保">更换屏保</h2><p>kindle的屏保看腻了？那就自己换个吧，依次执行下面的命令：</p>
+<pre><code class="bash"># 挂载系统可写
+mntroot rw
+# 备份自带的屏保
+mv /usr/share/blanket/screensaver /usr/share/blanket/screensaver.bak
+# 将屏保目录软链接到自定义目录
+ln -s /mnt/us/screensaver /usr/share/blanket/screensaver
+# 重新挂载文件系统为只读
+mntroot ro
+</code></pre>
+<p><strong>注意</strong>屏保文件名格式是bg_medium_ssxx.png,其中xx为编号，并且必须从00开始编号。原始壁纸为20张，但是自定义的目录不到20张也是可以的。操作完成之后如果屏保显示不正常，重启一下即可(重启的时候不要连电脑)。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>上篇已经说了怎么越狱，因为我的pw2是日版的，发现很耗电，删除了很多书了，还是三四天就开始出没电报警了。通过越狱后可以关掉索引，这样耗电量就小好多了，到现在一周了，电量还没消耗掉50%（最近一天看书2小时左右），这对于我来说已经很满意了。</p>
+<h2 id="ssh登录kindle">ssh登录kindle</h2><p>按照<a href="http://js8.in/2013/12/29/kindle-paperwhite2-542%E8%B6%8A%E7%8B%B1/">上篇</a>操作，越狱之后 ，在搜索输入框内输入<code>;711</code> 就可以看到自己现在wifi的ip。</p>
+<h3 id="生成SSH密钥">生成SSH密钥</h3><p>为了每次方便，我使用了<code>puttygen.exe</code>生成了ssh密钥。操作跟github的一样，打开<code>puttygen.exe</code>，点击<code>Generate</code> 然后鼠标在key下面来回晃动，生成一个key，将生成的key复制，保存为：<code>authorized_keys</code>。点击<code>save private key</code>，将生成的密钥保存在硬盘上，例如：<code>c:\private-key-for -kpw.ppk</code>。</p>
+<p>usb连上kindle，放在<code>usbnet/etc</code>文件夹下。</p>
+<h3 id="SSH连接kindle">SSH连接kindle</h3><p>按照<a href="http://js8.in/2013/12/29/kindle-paperwhite2-542%E8%B6%8A%E7%8B%B1/">上篇</a>中【安装USBNetwork】操作，打开wifi连接ssh。使用<code>;711</code>查询出kindle在现在网络的ip。</p>
+<p>打开winscp，新建一个ssh会话，例如：sftp://192.168.xxx.xxx，用户名是root，端口22，用户密钥文件，选择上面保存的ppk地址，例如<code>c:\private-key-for -kpw.ppk</code></p>
+<p>然后点击登录，就可以登录kindle了。</p>
+<h2 id="关闭索引">关闭索引</h2><p>kindle的索引是不停的在后台建立的，当书籍比较多或者书比较大的情况下，一般会碰见卡索引的问题，这时候需要关闭索引了，减少耗电！个人认为索引是比较鸡肋的功能。因人而异哈~</p>
+<p>ssh连上kindle之后，执行</p>]]>
+    
+    </summary>
+    
+      <category term="越狱" scheme="http://js8.in/tags/%E8%B6%8A%E7%8B%B1/"/>
+    
+      <category term="kindle" scheme="http://js8.in/tags/kindle/"/>
+    
+      <category term="折腾一下" scheme="http://js8.in/categories/%E6%8A%98%E8%85%BE%E4%B8%80%E4%B8%8B/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[kindle paperwhite2 5.4.2越狱]]></title>
+    <link href="http://js8.in/2013/12/29/kindle-paperwhite2-542%E8%B6%8A%E7%8B%B1/"/>
+    <id>http://js8.in/2013/12/29/kindle-paperwhite2-542越狱/</id>
+    <published>2013-12-29T09:28:58.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>买了kindle有一段时间了，发现电池并没有官方说的那么给力，我的pw2是从日本托朋友代购的，发现充电满了一天就差不多掉1/3的样子，曾经打电话给国内的亚马逊寻求帮助，但是国内亚马逊以国内还没上线为由没给我处理，要我自己到日亚提问？！</p>
+<p>上网查了下，听说关掉索引会解决这个问题，于是我就一直琢磨这怎么越狱。</p>
+<h2 id="kindle越狱工具">kindle越狱工具</h2><p>我的越狱工具是从mobileread下载的：<a href="http://www.mobileread.com/forums/showthread.php?t=186645" target="_blank" rel="external">http://www.mobileread.com/forums/showthread.php?t=186645</a>。</p>
+<h2 id="kindle越狱">kindle越狱</h2><p>首先解压上面下载的kindle-jailbreak.zip越狱工具，得到三个文件：</p>
+<ul>
+<li>bridge.sh</li>
+<li>jb.sh</li>
+<li>update<em>jb</em>$(cd mnt &amp;&amp; cd us &amp;&amp; sh jb.sh).bin</li>
+</ul>
+<p>将这个这三个文件copy到kindle的根目录下，然后<em>断开USB</em>连接，返回kindle[主页]，点击[菜单]中的[设置]，进入设置页面之后，再点击[菜单]选择[更新设备]，这时候会执行bin文件，过一会儿之后，你就会在这个界面下面看到</p>
+<p><strong><strong> JAILBREAK </strong></strong></p>
+<p>就表示已经越狱成功了</p>
+<h2 id="安装启动器KUAL">安装启动器KUAL</h2><p>安装插件之前需要安装KUAL作为启动器。启动器下载地址：<a href="http://www.mobileread.com/forums/showthread.php?t=203326" target="_blank" rel="external">http://www.mobileread.com/forums/showthread.php?t=203326</a></p>
+<a id="more"></a>
+<p>下载prerequisites-all-supported-devices.zip，解压会得到类似update_kindlet-xxxx_install.bin，将该bin文件拷贝至KPW根目录，然后断开KPW的USB连接，然后按照之前的操作，选择[更新你的设备]更新Kindle。如果有重启，请不要担心哦~</p>
+<p>下载：KUAL.V.2.2.zip ，解压得到一个azw2的格式文件，这个就是KUAL启动器了，将这个文件copy到kindle的<code>documents</code>文件下，就可以了。</p>
+<p>这时候你再打开自己的kindle就会发现多了一本书：<code>KindleLauncher</code>。其实这个就是KUAL启动器了。</p>
+<h2 id="安装kindle扩展插件">安装kindle扩展插件</h2><p>基于KUAL启动器有很多扩展，这些扩展基本都是绿色版的，即将文件copy到kindle的<code>extensions</code>文件夹下，然后在<code>KindleLauncher</code>中启动就好了</p>
+<h2 id="安装USBNetwork">安装USBNetwork</h2><p>USBNetwork是kindle的一个扩展，可以查到kindle的ip信息，甚至实现wifi传书和远程ssh功能。</p>
+<p>还是在第一个<a href="http://www.mobileread.com/forums/showthread.php?t=186645" target="_blank" rel="external">帖子地址</a>，下载kindle-usbnet-0.15.N.zip 这个文件，解压得到一个类似update_usbnet_XXX_install.bin的bin文件，copy到kindle的根目录，端口USB，按照前面的操作[更新你的设备]，等重启后就安装好了。</p>
+<p>重启后，进入KUAL，就看到多了个USBNetwork菜单，点击进去，依次选择：</p>
+<ul>
+<li>Allow SSH Over WiFi</li>
+<li>Restrict SSH to WIFI, stay in USBMS</li>
+</ul>
+<p>这样就开启了SSH功能。</p>
+<h3 id="查看kindle连接wifi信息">查看kindle连接wifi信息</h3><p>在搜索的输入框内，输入<code>;711</code> 点击搜索，就进入了Wifi详情页。如果有多页，可以滑动切换到下一页，在这里你就可以找到自己kindle在当前wifi的ip地址了。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>买了kindle有一段时间了，发现电池并没有官方说的那么给力，我的pw2是从日本托朋友代购的，发现充电满了一天就差不多掉1/3的样子，曾经打电话给国内的亚马逊寻求帮助，但是国内亚马逊以国内还没上线为由没给我处理，要我自己到日亚提问？！</p>
+<p>上网查了下，听说关掉索引会解决这个问题，于是我就一直琢磨这怎么越狱。</p>
+<h2 id="kindle越狱工具">kindle越狱工具</h2><p>我的越狱工具是从mobileread下载的：<a href="http://www.mobileread.com/forums/showthread.php?t=186645">http://www.mobileread.com/forums/showthread.php?t=186645</a>。</p>
+<h2 id="kindle越狱">kindle越狱</h2><p>首先解压上面下载的kindle-jailbreak.zip越狱工具，得到三个文件：</p>
+<ul>
+<li>bridge.sh</li>
+<li>jb.sh</li>
+<li>update<em>jb</em>$(cd mnt &amp;&amp; cd us &amp;&amp; sh jb.sh).bin</li>
+</ul>
+<p>将这个这三个文件copy到kindle的根目录下，然后<em>断开USB</em>连接，返回kindle[主页]，点击[菜单]中的[设置]，进入设置页面之后，再点击[菜单]选择[更新设备]，这时候会执行bin文件，过一会儿之后，你就会在这个界面下面看到</p>
+<p><strong><strong> JAILBREAK </strong></strong></p>
+<p>就表示已经越狱成功了</p>
+<h2 id="安装启动器KUAL">安装启动器KUAL</h2><p>安装插件之前需要安装KUAL作为启动器。启动器下载地址：<a href="http://www.mobileread.com/forums/showthread.php?t=203326">http://www.mobileread.com/forums/showthread.php?t=203326</a></p>]]>
+    
+    </summary>
+    
+      <category term="越狱" scheme="http://js8.in/tags/%E8%B6%8A%E7%8B%B1/"/>
+    
+      <category term="kindle" scheme="http://js8.in/tags/kindle/"/>
+    
+      <category term="折腾一下" scheme="http://js8.in/categories/%E6%8A%98%E8%85%BE%E4%B8%80%E4%B8%8B/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[iOS使用scheme协议调起APP]]></title>
+    <link href="http://js8.in/2013/12/16/ios%E4%BD%BF%E7%94%A8schema%E5%8D%8F%E8%AE%AE%E8%B0%83%E8%B5%B7app/"/>
+    <id>http://js8.in/2013/12/16/ios使用schema协议调起app/</id>
+    <published>2013-12-16T02:49:32.000Z</published>
+    <updated>2017-08-10T04:34:52.000Z</updated>
+    <content type="html"><![CDATA[<p>在iOS中，需要调起一个app可以使用scheme协议，这是iOS原生支持的，并且因为iOS系统中都不能使用自己的浏览器内核，所以所有的浏览器都支持，这跟android生态不一样，android是可以自己搞内核的，但是iOS不行。</p>
+<p>在iOS中提供了两种在浏览器中打开APP的方法：<code>Smart App Banner</code>和scheme协议。</p>
+<h2 id="Smart_App_Banner">Smart App Banner</h2><p>即通过一个meta 标签，在标签上带上app的信息，和打开后的行为，例如：app-id之类的，代码形如：</p>
+<pre><code class="html">&lt;meta name=&quot;apple-itunes-app&quot; content=&quot;app-id=myAppStoreID, affiliate-data=myAffiliateData, app-argument=myURL&quot;&gt;
+</code></pre>
+<p>具体可以看下开发文档：<a href="https://developer.apple.com/library/ios/documentation/AppleApplications/Reference/SafariWebContent/PromotingAppswithAppBanners/PromotingAppswithAppBanners.html" target="_blank" rel="external">https://developer.apple.com/library/ios/documentation/AppleApplications/Reference/SafariWebContent/PromotingAppswithAppBanners/PromotingAppswithAppBanners.html</a></p>
+<p>今天Smart APP Banner不是我们的主角，我们说的是<em>scheme</em></p>
+<h2 id="使用scheme_URL来打开iOS_APP">使用scheme URL来打开iOS APP</h2><p>scheme类似自定义url协议，我们可以通过自定义的协议来打开自己的应用，形如：</p>
+<pre><code class="bash">myapplink://
+# 例如 facebook的
+fb://
+# itunes的
+itms-apps://
+# 还有短信也是类似的
+sms://
+</code></pre>
+<p>如果要打开一个app，最简单的方式是通过一个链接，如我们在html中这样写：</p>
+<pre><code class="html">&lt;a href=&quot;myapplink://&quot;&gt;打开我的app&lt;/a&gt;
+</code></pre>
+<p>当用户点击链接的时候就可以打开对应的app。</p>
+<h3 id="绑定click事件">绑定click事件</h3><p>但是实际中我们更多的情况是绑定事件，比如做个弹层啥的，不能一味的用a标签啊，所以可以通过两种方式来解决：<code>location.href</code>和<code>iframe</code>。</p>
+<ul>
+<li><code>location.href</code>，简单，但是容易出现问题，比如没有安装可能会跳转啦。</li>
+<li><code>iframe</code>，比较复杂，需要创建一个iframe，然后把scheme扔给src</li>
+</ul>
+<p>iframe的方式是开发中常用的，但是他也有一些问题：</p>
+<ul>
+<li>我们没很好的方式来判断是否打开了app</li>
+<li>会引起history变化</li>
+<li>因为引起history变化，所以一些webview会有问题，比如：我查查，打开一个页面，如果有iframe，选择在safari中打开，实际打开的是iframe的页面</li>
+<li>如果页面暴漏给了android系统，那么也会出现页面打不开，之类的问题</li>
+<li>如果没有app，调起不成功，ios的safari会自己弹出一个对话框：打不开网址之类的提示</li>
+</ul>
+<p>所以现在的问题是：<strong>如何知道iframe已经打开了某个app，即解决iframe打开app回调</strong></p>
+<a id="more"></a>
+<h3 id="使用iframe在iOS系统中打开app">使用iframe在iOS系统中打开app</h3><p>聪明的你可能想到了，iframe的onload事件啊，可是遗憾的说，<em>无效</em>！所以我们找到了定时器（setTimeout），通过一个定时器，如果在一段时间内（比如500ms），当点击了按钮（记录time1），页面没有切走（调起app之后，页面进程会被中断），进程中断，那么计时器也会中断，这时候应该不会触发timer，如果调起失败，那么timer会就触发，我们判断下在一定时间内如果页面没有被切走，就认为调起失败。</p>
+<p>另外通过timer触发时候的timer2，做差，判断是否太离谱了（切走了之后的时间应该比timer实际定时的500ms要长）：</p>
+<pre><code class="javascript">function openIos(url, callback) {
+    if (!url) {
+        return;
+    }
+    var node = document.createElement(&#39;iframe&#39;);
+    node.style.display = &#39;none&#39;;
+    var body = document.body;
+    var timer;
+    var clear = function(evt, isTimeout) {
+       (typeof callback===&#39;function&#39;) &amp;&amp;  callback(isTimeout);
+        if (!node) {
+            return;
+        }
+        node.onload = null;
+        body.removeChild(node);
+        node = null;
+
+    };
+    var hide = function(e){
+        clearTimeout(timer);
+        clear(e, false);
+    };
+    node.onload = clear;
+    node.src = url;
+    body.appendChild(node);
+    var now = +new Date();
+    //如果事件失败，则1秒设置为空
+    timer = setTimeout(function(){
+        var newTime = +new Date();
+          if(now-newTime&gt;600){
+            //因为切走了，在切回来需要消耗时间
+            //所以timer即使执行了，但是两者的时间差应该跟500ms有较大的出入
+            //但是实际并不是这样的！
+            clear(null, false);
+          }else{
+            clear(null, true);
+          }
+    }, 500);
+}
+</code></pre>
+<p>看上去方法很靠谱，但是现实总是那么的残酷！</p>
+<p>不同的浏览器app（包括webview），都有自己在后台的常驻时间，即：假如一个浏览器他在被切走之后，后台常驻10s，那么我们设置定时器5s过期就是徒劳的，而且5s的定时器，用户要空等5s！交互也不让你这样干啊！</p>
+<p>最后我们想到了pageshow和pagehide事件，即如果浏览器被切走到了要打开的app，应该会触发浏览器的pagehide事件，而从app重新返回到浏览器，就会触发pageshow方法。</p>
+<p>但是经过代码测试发现，在uc、chrome中，不会触发pagehide和pageshow的方法，而在safari中可以的。</p>
+<p>结论：</p>
+<ul>
+<li>使用iframe调用scheme URL</li>
+<li>使用定时器判断在一段时间内是否调起成功</li>
+<li>使用pageshow和pagehide来辅助定时器做更详细的判断</li>
+<li>定时器中如果有alert可能不会被弹出，这一点很吃惊！后面的dom竟然执行了，但是alert没弹出，可能跟alert的实现有关系吧</li>
+<li>在实验中我使用了两个定时器，是因为切回浏览器之后，有时候timeout触发要在pagehide和pageshow之前</li>
+<li>计算timer实际执行时间差，也是不靠谱的</li>
+</ul>
+<p>查看<a href="demo">http://jsbin.com/uDUGADO/19</a>，最后附上研究的代码，算是比较靠谱的方法了，虽然还是有一定的失败（第三方浏览器pagehide和pageshow不触发）：</p>
+<pre><code class="html">&lt;p&gt;&lt;button id=&quot;btn&quot;&gt;点我点我啊！alert，不会弹出&lt;/button&gt;&lt;/p&gt;
+&lt;p&gt;&lt;button id=&quot;btn2&quot;&gt;点我点我啊！alert2，虽然有alert和info，info执行，但是alert不弹出&lt;/button&gt;&lt;/p&gt;
+&lt;p&gt;&lt;button id=&quot;btninfo&quot;&gt;点我点我啊！info可以&lt;/button&gt;&lt;/p&gt;
+</code></pre>
+<pre><code class="javascript">$(function(){
+  var $info = $(&#39;#info&#39;);
+  function info(msg){
+    var p = $(&#39;&lt;p&gt;&#39;+msg+&#39;&lt;/p&gt;&#39;);
+    $info.append(p);
+  }
+
+  $(&#39;#btn&#39;).on(&#39;click&#39;, function(){
+    openIos(&#39;baiduboxapp://&#39;, function(t){
+      if(t){
+        alert(&#39;timeout or no baidu APP&#39;);
+      }else{
+        alert(&#39;invoke success&#39;);
+      }
+    });
+  });
+  $(&#39;#btn2&#39;).on(&#39;click&#39;, function(){
+    openIos(&#39;baiduboxapp://&#39;, function(t){
+      if(t){
+        info(&#39;timeout or no baidu APP2&#39;);
+        alert(&#39;timeout or no baidu APP2&#39;);
+      }else{
+        info(&#39;invoke success2&#39;);
+        alert(&#39;invoke success2&#39;);
+      }
+    });
+  });
+  $(&#39;#btninfo&#39;).on(&#39;click&#39;, function(){
+    openIos(&#39;baiduboxapp://&#39;, function(t){
+      if(t){
+        info(&#39;timeout or no baidu APP&#39;);
+      }else{
+        info(&#39;invoke success&#39;);
+      }
+    });
+  });
+
+});
+
+function openIos(url, callback) {
+    if (!url) {
+        return;
+    }
+    var node = document.createElement(&#39;iframe&#39;);
+    node.style.display = &#39;none&#39;;
+    var body = document.body;
+    var timer;
+    var clear = function(evt, isTimeout) {
+       (typeof callback===&#39;function&#39;) &amp;&amp;  callback(isTimeout);
+        window.removeEventListener(&#39;pagehide&#39;, hide, true);
+        window.removeEventListener(&#39;pageshow&#39;, hide, true);
+        if (!node) {
+            return;
+        }
+
+        node.onload = null;
+        body.removeChild(node);
+        node = null;
+
+    };
+    var hide = function(e){
+        clearTimeout(timer);
+        clear(e, false);
+    };
+    window.addEventListener(&#39;pagehide&#39;, hide, true);
+    window.addEventListener(&#39;pageshow&#39;, hide, true);
+    node.onload = clear;
+    node.src = url;
+    body.appendChild(node);
+    var now = +new Date();
+    //如果事件失败，则1秒设置为空
+    timer = setTimeout(function(){
+        timer = setTimeout(function(){
+          var newTime = +new Date();
+          if(now-newTime&gt;1300){
+            clear(null, false);
+          }else{
+            clear(null, true);
+          }
+
+        }, 1200);
+    }, 60);
+}
+</code></pre>
+<h2 id="update">update</h2><ul>
+<li>ios9开始不支持在iframe内调起，需要直接使用<code>location.href = scheme</code></li>
+<li>pagehide，pageshow方法已经失效，目前没有合适的检测是否调起成功的方法，有找到请告知， 谢谢<br>a</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>在iOS中，需要调起一个app可以使用scheme协议，这是iOS原生支持的，并且因为iOS系统中都不能使用自己的浏览器内核，所以所有的浏览器都支持，这跟android生态不一样，android是可以自己搞内核的，但是iOS不行。</p>
+<p>在iOS中提供了两种在浏览器中打开APP的方法：<code>Smart App Banner</code>和scheme协议。</p>
+<h2 id="Smart_App_Banner">Smart App Banner</h2><p>即通过一个meta 标签，在标签上带上app的信息，和打开后的行为，例如：app-id之类的，代码形如：</p>
+<pre><code class="html">&lt;meta name=&quot;apple-itunes-app&quot; content=&quot;app-id=myAppStoreID, affiliate-data=myAffiliateData, app-argument=myURL&quot;&gt;
+</code></pre>
+<p>具体可以看下开发文档：<a href="https://developer.apple.com/library/ios/documentation/AppleApplications/Reference/SafariWebContent/PromotingAppswithAppBanners/PromotingAppswithAppBanners.html">https://developer.apple.com/library/ios/documentation/AppleApplications/Reference/SafariWebContent/PromotingAppswithAppBanners/PromotingAppswithAppBanners.html</a></p>
+<p>今天Smart APP Banner不是我们的主角，我们说的是<em>scheme</em></p>
+<h2 id="使用scheme_URL来打开iOS_APP">使用scheme URL来打开iOS APP</h2><p>scheme类似自定义url协议，我们可以通过自定义的协议来打开自己的应用，形如：</p>
+<pre><code class="bash">myapplink://
+# 例如 facebook的
+fb://
+# itunes的
+itms-apps://
+# 还有短信也是类似的
+sms://
+</code></pre>
+<p>如果要打开一个app，最简单的方式是通过一个链接，如我们在html中这样写：</p>
+<pre><code class="html">&lt;a href=&quot;myapplink://&quot;&gt;打开我的app&lt;/a&gt;
+</code></pre>
+<p>当用户点击链接的时候就可以打开对应的app。</p>
+<h3 id="绑定click事件">绑定click事件</h3><p>但是实际中我们更多的情况是绑定事件，比如做个弹层啥的，不能一味的用a标签啊，所以可以通过两种方式来解决：<code>location.href</code>和<code>iframe</code>。</p>
+<ul>
+<li><code>location.href</code>，简单，但是容易出现问题，比如没有安装可能会跳转啦。</li>
+<li><code>iframe</code>，比较复杂，需要创建一个iframe，然后把scheme扔给src</li>
+</ul>
+<p>iframe的方式是开发中常用的，但是他也有一些问题：</p>
+<ul>
+<li>我们没很好的方式来判断是否打开了app</li>
+<li>会引起history变化</li>
+<li>因为引起history变化，所以一些webview会有问题，比如：我查查，打开一个页面，如果有iframe，选择在safari中打开，实际打开的是iframe的页面</li>
+<li>如果页面暴漏给了android系统，那么也会出现页面打不开，之类的问题</li>
+<li>如果没有app，调起不成功，ios的safari会自己弹出一个对话框：打不开网址之类的提示</li>
+</ul>
+<p>所以现在的问题是：<strong>如何知道iframe已经打开了某个app，即解决iframe打开app回调</strong></p>]]>
+    
+    </summary>
+    
+      <category term="ios" scheme="http://js8.in/tags/ios/"/>
+    
+      <category term="手机开发" scheme="http://js8.in/tags/%E6%89%8B%E6%9C%BA%E5%BC%80%E5%8F%91/"/>
+    
+      <category term="webapp" scheme="http://js8.in/tags/webapp/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[vps迁移记录和linux命令]]></title>
+    <link href="http://js8.in/2013/12/07/vps%E8%BF%81%E7%A7%BB%E8%AE%B0%E5%BD%95%E5%92%8Clinux%E5%91%BD%E4%BB%A4/"/>
+    <id>http://js8.in/2013/12/07/vps迁移记录和linux命令/</id>
+    <published>2013-12-07T06:18:21.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>因为之前的乐谷云集找不到老巢了，官网都挂了，网上说是跑路了，虽然之前有人联系过我说是有他们公司接管，但是等出现问题联系的时候，却是找不到人。所以决定更换vps。简单记录下用到的这次vps迁移用到的命令。</p>
+<p>新的vps是用的centos 32。</p>
+<h2 id="登陆后更换密码">登陆后更换密码</h2><p>连上ssh之后，第一件事情就是更换root密码，用到的命令是<code>passwd</code></p>
+<p>连续两次输入新的密码就可以。</p>
+<h3 id="添加新用户www">添加新用户www</h3><p><code>passwd www</code> 继续数据www的密码。就可以添加</p>
+<h2 id="安装软件包命令Yum">安装软件包命令Yum</h2><p>ubuntu的包管理软件是<code>app-get</code>，centos的包管理软件是<code>yum</code>，因为我的vps是centos，所以使用<code>yum</code>。</p>
+<pre><code class="bash"># 安装
+yum install xxx
+# 删除
+yum remove httpd
+</code></pre>
+<p>因为我使用的是lnmp，所以对于默认安装的apache可以删除，使用<code>yum remove httpd</code>。</p>
+<h2 id="使用screen来管理对话">使用screen来管理对话</h2><p>经常就是遇见网络连接不好，ssh中断，那么执行的程序就不知道会不会成功，所以有了<code>screen</code>。如果使用<code>screen --help</code>没有命令，那么需要安装下：</p>
+<p><code>yum install screen</code></p>
+<h3 id="screen常用命令">screen常用命令</h3><pre><code class="bash"># 创建screen对话
+screen -S lnmp
+# 查看现在运行的screen
+screen -ls
+# 读取某个screen
+screen -r lnmp
+# 退出screen，在当前screen中执行exit
+exit
+</code></pre>
+<a id="more"></a>
+<h2 id="安装lnmp">安装lnmp</h2><p>CentOS系统下执行：<code>wget -c http://soft.vpser.net/lnmp/lnmp1.0-full.tar.gz &amp;&amp; tar zxvf lnmp1.0-full.tar.gz &amp;&amp; cd lnmp1.0-full &amp;&amp; ./centos.sh</code><br>Debian系统下执行：<code>wget -c http://soft.vpser.net/lnmp/lnmp1.0-full.tar.gz &amp;&amp; tar zxvf lnmp1.0-full.tar.gz &amp;&amp; cd lnmp1.0-full &amp;&amp; ./debian.sh</code><br>Ubuntu系统下执行：<code>wget -c http://soft.vpser.net/lnmp/lnmp1.0-full.tar.gz &amp;&amp; tar zxvf lnmp1.0-full.tar.gz &amp;&amp; cd lnmp1.0-full &amp;&amp; ./ubuntu.sh</code></p>
+<p>中间会要你选择php版本，mysql版本，mysql root密码</p>
+<h3 id="lnmp状态管理命令">lnmp状态管理命令</h3><ul>
+<li>LNMP状态管理： <code>/root/lnmp {start|stop|reload|restart|kill|status}</code></li>
+<li>Nginx状态管理：<code>/etc/init.d/nginx {start|stop|reload|restart}</code></li>
+<li>MySQL状态管理：<code>/etc/init.d/mysql {start|stop|restart|reload|force-reload|status}</code></li>
+<li>Memcached状态管理：<code>/etc/init.d/memcached {start|stop|restart}</code></li>
+<li>PHP-FPM状态管理：<code>/etc/init.d/php-fpm {start|stop|quit|restart|reload|logrotate}</code></li>
+<li>PureFTPd状态管理： <code>/etc/init.d/pureftpd {start|stop|restart|kill|status}</code></li>
+<li>ProFTPd状态管理：<code>/etc/init.d/proftpd {start|stop|restart|reload}</code></li>
+</ul>
+<p>如重启LNMP，输入命令：<code>/root/lnmp restart</code> 即可，单独重启mysql：<code>/etc/init.d/mysql restart</code></p>
+<p>大约要经过一个小时（看自己的vps的网速了）</p>
+<h3 id="LNMP相关软件安装目录">LNMP相关软件安装目录</h3><p>Nginx 目录: /usr/local/nginx/<br>MySQL 目录 : /usr/local/mysql/<br>MySQL数据库所在目录：/usr/local/mysql/var/<br>PHP目录 : /usr/local/php/<br>PHPMyAdmin目录 : 0.9版为/home/wwwroot/phpmyadmin/ 1.0版为 /home/wwwroot/default/phpmyadmin/ 强烈建议将此目录重命名为其不容易猜到的名字。phpmyadmin可自己从官网下载新版替换。<br>默认网站目录 : 0.9版为 /home/wwwroot/ 1.0版为 /home/wwwroot/default/<br>Nginx日志目录：/home/wwwlogs/<br>/root/vhost.sh添加的虚拟主机配置文件所在目录：/usr/local/nginx/conf/vhost/<br>PureFtpd 目录：/usr/local/pureftpd/<br>PureFtpd web管理目录： 0.9版为/home/wwwroot/default/ftp/ 1.0版为 /home/wwwroot/default/ftp/<br>Proftpd 目录：/usr/local/proftpd/</p>
+<h3 id="LNMP相关配置文件位置">LNMP相关配置文件位置</h3><p>Nginx主配置文件：/usr/local/nginx/conf/nginx.conf<br>/root/vhost.sh添加的虚拟主机配置文件：/usr/local/nginx/conf/vhost/域名.conf<br>MySQL配置文件：/etc/my.cnf<br>PHP配置文件：/usr/local/php/etc/php.ini<br>php-fpm配置文件：/usr/local/php/etc/php-fpm.conf<br>PureFtpd配置文件：/usr/local/pureftpd/pure-ftpd.conf<br>PureFtpd MySQL配置文件：/usr/local/pureftpd/pureftpd-mysql.conf<br>Proftpd配置文件：/usr/local/proftpd/etc/proftpd.conf<br>Proftpd 用户配置文件：/usr/local/proftpd/etc/vhost/用户名.conf</p>
+<h3 id="LNMPA相关目录文件位置">LNMPA相关目录文件位置</h3><p>Apache目录：/usr/local/apache/<br>Apache配置文件：/usr/local/apache/conf/httpd.conf<br>Apache虚拟主机配置文件目录：/usr/local/apache/conf/vhost/</p>
+<h2 id="安装nodejs">安装nodejs</h2><p>作为前端，当然要安装nodejs啦，可是centos不能像ubuntu那么方便使用<code>apt-get</code>，而需要自己编译，后来在nodejs官网看到了centos也可以使用包管理：<a href="https://github.com/joyent/node/wiki/Installing-Node.js-via-package-manager" target="_blank" rel="external">https://github.com/joyent/node/wiki/Installing-Node.js-via-package-manager</a></p>
+<p>依次在命令行中执行：</p>
+<pre><code class="bash">yum repolist
+curl -O http://download-i2.fedoraproject.org/pub/epel/6/i386/epel-release-6-8.noarch.rpm
+sudo rpm -ivh epel-release-6-8.noarch.rpm
+sudo yum install npm --enablerepo=epel
+</code></pre>
+<p>经过上面折腾，一般就可以了，使用<code>node -v</code> 和 <code>npm -v</code>就可以了。</p>
+<p>这时候可以试下安装nodeppt是否成功：<code>npm install -g nodeppt</code></p>
+<h2 id="备份之前的vps数据">备份之前的vps数据</h2><p>打包之前的web程序，使用zip。</p>
+<pre><code class="bash"># 打包
+zip -r www.zip www
+# 解压
+unzip www.zip
+</code></pre>
+<h3 id="备份数据库">备份数据库</h3><p><code>mysqldump -u root -p --default-character-set=utf8 --all-databases &gt; all1207.sql</code></p>
+<p>为了传输方便，可以使用zip将all1207.sql打包</p>
+<h3 id="vps之间传输数据scp">vps之间传输数据scp</h3><p>例如在B上要将A在<code>/home/root/all.zip</code>传输到<code>/home</code>：</p>
+<p><code>scp root@A:/home/root/all.zip /home</code></p>
+<p>如果需要传输的是文件夹，那么需要添加<code>-r</code></p>
+<p><code>scp -r root@A:/home/root/ /home</code></p>
+<h3 id="导入数据库">导入数据库</h3><p>进入mysql：<code>mysql -u root -p</code>， 导入数据：</p>
+<p><code>mysql&gt;source /home/root/all.sql</code></p>
+<h2 id="lnmp优化">lnmp优化</h2><p>lnmp虽然已经优化的不错了，但是根据自己的vps特点，比如多核、内存大小，可以调整下自己的lnmp配置。</p>
+<h3 id="安装eAccelerator">安装eAccelerator</h3><p><strong>eAccelerator</strong>是我用的php加速器，lnmp中安装还是很简单的，进入lnmp的下载包，然后执行<code>./eaccelerator.sh</code>，根据提示选择对应的eAccelerator的版本就好，我因为是php5.3所以选择了<code>new</code>。</p>
+<h4 id="配置eAccelerator">配置eAccelerator</h4><p>安装后可以下载eAccelerator的管理php，首先打开php，修改下登录用户名和密码，然后放在自己的网络根目录就可以访问了。默认设置缓存是1M，感觉有点小，可以参考下《<a href="http://js8.in/2011/11/03/linux%E5%AE%89%E8%A3%85php%E5%8A%A0%E9%80%9F%E5%99%A8eaccelerator/">linux安装PHP加速器eAccelerator</a> 》修改下配置。</p>
+<h3 id="安装memcached">安装memcached</h3><p>memcached是内存缓存，可以将查询出来的mysql之类的数据，存入memcached来减少IO操作。在lnmp中安装也是很简单的，同样是进入lnmp的包，执行<code>./memcached.sh</code>，就可以了</p>
+<h4 id="启动memcached">启动memcached</h4><p><code>/usr/local/memcached/bin/memcached -d -p 11214 -u root -m 10 -c 1024 -t 8 -P /tmp/memcached.pid</code></p>
+<h3 id="关闭mysql日志">关闭mysql日志</h3><p>mysql的日志功能，一般没啥用，之前我的vps曾经因为mysql日志太多导致硬盘报警，所以这次我就直接关闭了：</p>
+<h4 id="删除日志">删除日志</h4><p>执行：<code>/usr/local/mysql/bin/mysql -u root -p</code><br>输入密码登录后再执行：<code>reset master;</code></p>
+<p>修改<code>/etc/my.cnf</code> 文件，找到</p>
+<pre><code>log-bin=mysql-bin
+binlog_format=mixed
+</code></pre><h3 id="开机自启动">开机自启动</h3><p>修改<code>/etc/rc.d/rc.local</code>。需要用vi执行：<code>vi /etc/rc.d/rc.local</code>，比如要将memcached添加到自启动任务重，需要给<code>rc.local</code> 添加下面的命令：</p>
+<pre><code class="bash">/usr/local/memcached/bin/memcached -d -p 11214 -u root -m 10 -c 1024 -t 8 -P /tmp/memcached.pid
+/usr/local/memcached/bin/memcached -d -p 11211 -u root -m 14 -c 1024 -t 8 -P /tmp/memcached-main.pid
+</code></pre>
+<h3 id="crontab定时任务">crontab定时任务</h3><p>在命令行中执行<code>crontab -e</code> 进入定时任务页面，跟vi使用一样，编辑好了<code>:wq</code>就可以了。通过crontab 可以做日志切割，负载过高自动重启。</p>
+<h4 id="切割日志">切割日志</h4><pre><code class="bash">#!/bin/bash
+# This script run at 00:00
+
+# The Nginx logs path
+logs_path=&quot;/xxx/logs/&quot;
+
+mkdir -p ${logs_path}$(date -d &quot;yesterday&quot; +&quot;%Y%m%d&quot;)/
+
+
+mv /home/wwwlogs/* ${logs_path}$(date -d &quot;yesterday&quot; +&quot;%Y%m%d&quot;)/
+kill -USR1 `cat /usr/local/nginx/logs/nginx.pid`
+</code></pre>
+<p>添加crontab，每天凌晨0点执行：<code>00 00 * * * /bin/sh /xxx/bin/cut_nginx_logs.sh</code></p>
+<h4 id="负载过高自动重启负载">负载过高自动重启负载</h4><pre><code class="bash">#!/bin/bash
+# script to check server for extremely high load and restart Apache if the condition is matched
+check=`cat /proc/loadavg | sed &#39;s/./ /&#39; | awk &#39;{print $1}&#39;`
+check=$( printf &quot;%.0f&quot; $check )
+# define max load avarage when script is triggered
+max_load=15
+# log file
+high_load_log=&#39;/root/lnmp_high_load_restart.log&#39;
+
+# location to Lnmp init script
+lnmp=&#39;/root/lnmp&#39;
+
+if [ $check -gt &quot;$max_load&quot; ]; then
+    $lnmp stop
+    sleep 5
+    $lnmp restart
+    echo &quot;$(date) : Lnmp Restart due to excessive load | $check |&quot; &gt;&gt; $high_load_log
+fi
+</code></pre>
+<p>添加crontab，没十分钟检测一次：<code>*/10 * * * * /bin/sh /root/lnmp_auto_restart.sh</code></p>
+<h3 id="增强php安全">增强php安全</h3><p>我使用了phpsecinfo来查看php的配置，具体可以查看下<a href="http://phpsec.org/projects/phpsecinfo/" target="_blank" rel="external">http://phpsec.org/projects/phpsecinfo/</a>。根据自己情况修改php.ini 然后重启php-fpm即可。</p>
+<h3 id="软连接ln">软连接ln</h3><p><code>ln -s /home/www/webroot /webroot</code></p>
+<h3 id="nginx_reload">nginx reload</h3><p>当配置了新的nginx 虚拟主机，或者修改了nginx配置文件，可以通过下面的命令reload配置，而不需要重启nginx造成网站中断：</p>
+<p><code>/usr/local/nginx/sbin/nginx -s reload</code></p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>因为之前的乐谷云集找不到老巢了，官网都挂了，网上说是跑路了，虽然之前有人联系过我说是有他们公司接管，但是等出现问题联系的时候，却是找不到人。所以决定更换vps。简单记录下用到的这次vps迁移用到的命令。</p>
+<p>新的vps是用的centos 32。</p>
+<h2 id="登陆后更换密码">登陆后更换密码</h2><p>连上ssh之后，第一件事情就是更换root密码，用到的命令是<code>passwd</code></p>
+<p>连续两次输入新的密码就可以。</p>
+<h3 id="添加新用户www">添加新用户www</h3><p><code>passwd www</code> 继续数据www的密码。就可以添加</p>
+<h2 id="安装软件包命令Yum">安装软件包命令Yum</h2><p>ubuntu的包管理软件是<code>app-get</code>，centos的包管理软件是<code>yum</code>，因为我的vps是centos，所以使用<code>yum</code>。</p>
+<pre><code class="bash"># 安装
+yum install xxx
+# 删除
+yum remove httpd
+</code></pre>
+<p>因为我使用的是lnmp，所以对于默认安装的apache可以删除，使用<code>yum remove httpd</code>。</p>
+<h2 id="使用screen来管理对话">使用screen来管理对话</h2><p>经常就是遇见网络连接不好，ssh中断，那么执行的程序就不知道会不会成功，所以有了<code>screen</code>。如果使用<code>screen --help</code>没有命令，那么需要安装下：</p>
+<p><code>yum install screen</code></p>
+<h3 id="screen常用命令">screen常用命令</h3><pre><code class="bash"># 创建screen对话
+screen -S lnmp
+# 查看现在运行的screen
+screen -ls
+# 读取某个screen
+screen -r lnmp
+# 退出screen，在当前screen中执行exit
+exit
+</code></pre>]]>
+    
+    </summary>
+    
+      <category term="linux" scheme="http://js8.in/tags/linux/"/>
+    
+      <category term="vps" scheme="http://js8.in/tags/vps/"/>
+    
+      <category term="后端运维" scheme="http://js8.in/categories/%E5%90%8E%E7%AB%AF%E8%BF%90%E7%BB%B4/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[五个你必须知道的javascript和web debug技术]]></title>
+    <link href="http://js8.in/2013/11/20/%E4%BA%94%E4%B8%AA%E4%BD%A0%E5%BF%85%E9%A1%BB%E7%9F%A5%E9%81%93%E7%9A%84javascript%E5%92%8Cweb-debug%E6%8A%80%E6%9C%AF/"/>
+    <id>http://js8.in/2013/11/20/五个你必须知道的javascript和web-debug技术/</id>
+    <published>2013-11-20T03:51:05.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>在前端开发中，调试技术是必不可少的技能，本文将介绍五种前端开发必备的调试技术。</p>
+<ol>
+<li>Weinre移动调试</li>
+<li>DOM 断点</li>
+<li>debugger断点</li>
+<li>native方法hook</li>
+<li>远程映射本地调试</li>
+</ol>
+<h2 id="Weinre">Weinre</h2><p>在移动上面开发调试是很复杂的，所以就有了<em>weinre</em>。安装<a href="http://people.apache.org/~pmuellr/weinre/docs/latest/" target="_blank" rel="external">weinre</a>可以实现pc来调试手机页面，所以对于移动开发调试是很重要的哦~</p>
+<p><img src="http://people.apache.org/~pmuellr/weinre/docs/latest/images/weinre-demo.jpg" alt="http://people.apache.org/~pmuellr/weinre/docs/latest/images/weinre-demo.jpg"></p>
+<h3 id="安装weinre">安装weinre</h3><p>weinre可以通过npm来安装：</p>
+<pre><code class="bash">npm install -g weinre
+</code></pre>
+<p>安装完之后，可执行下面的命令来启动：</p>
+<pre><code class="bash">weinre --httpPort 8080 --boundHost -all-
+</code></pre>
+<a id="more"></a>
+<p>这样访问自己的127.0.0.1:8080按照提示在需要调试页面中插入一段js，然后就可以调试了。操作界面类似Chrome的 DevTools，具体操作可以看下<a href="http://people.apache.org/~pmuellr/weinre/docs/latest/Running.html" target="_blank" rel="external">http://people.apache.org/~pmuellr/weinre/docs/latest/Running.html</a>教程</p>
+<h3 id="原理">原理</h3><p>通过在需要调试的页面中引入一段weinre的js，实现pc和手机的socket通信，从而实现实时调试。</p>
+<h3 id="Tips">Tips</h3><ol>
+<li>如果你嫌每次都要在调试的页面引入js麻烦，可以做个书签或者chrome插件</li>
+<li>如果嫌安装麻烦，可以使用phonegap的weinre：<a href="http://debug.phonegap.com/" target="_blank" rel="external">http://debug.phonegap.com/</a></li>
+</ol>
+<h2 id="DOM断点">DOM断点</h2><p><em>DOM断点</em>是一个Firebug和chrome DevTools提供的功能，当js需要操作打了断点的DOM时，会自动暂停，类似debugger调试。</p>
+<h3 id="使用DOM断点">使用DOM断点</h3><ol>
+<li>选择你要打断点的DOM节点</li>
+<li>右键选择<code>Break on..</code></li>
+<li>选择断点类型</li>
+</ol>
+<p><img src="/uploads/2013/11/dom.png" alt="DOM断点"></p>
+<h3 id="Tips-1">Tips</h3><ul>
+<li>Firebug中，DOM断点可以在Script&gt; Breakpoints里面看到</li>
+<li>chrome DevTools中，需要在Elements面板的DOM Breakpoints中看到</li>
+</ul>
+<h2 id="javascript的debugger语句">javascript的debugger语句</h2><p>需要调试js的时候，我们可以给需要调试的地方通过<code>debugger</code>打断点，代码执行到断点就会暂定，这时候通过单步调试等方式就可以调试js代码</p>
+<h3 id="使用javascript的断点">使用javascript的断点</h3><p>在需要打断点的地方添加<code>debugger</code>：</p>
+<pre><code class="javascript">if (waldo) {
+debugger;
+}
+</code></pre>
+<p>这时候打开console面板，就可以调试了</p>
+<h3 id="Tips-2">Tips</h3><p>如果你不知道怎么调试，那么尽快看下：<a href="https://developers.google.com/chrome-developer-tools/docs/javascript-debugging#breakpoints" target="_blank" rel="external">Chrome DevTools</a>中断点部分的教程</p>
+<h2 id="原生代码的hook调试">原生代码的hook调试</h2><p>因为浏览器自己会内置一些类似<code>window</code>对象这些原生的js方法，当你知道原生代码的确有问题，但是你又不能跟踪调试的时候，你就可以用这个方法了。</p>
+<h3 id="举个例子">举个例子</h3><p>例如我们注意到了一个DOM的属性值发生了变化，但是我们不知道是哪里的代码导致的变化，所以我们可以给DOM元素的<code>setAttribute</code>打个断点，代码如下：</p>
+<pre><code class="javascript">var oldFn = Element.prototype.setAttribute;
+
+Element.prototype.setAttribute = function (attr, value) {
+    if (value === &quot;the_droids_you_are_looking_for&quot;) {
+        debugger;
+    }
+    oldFn.call(this, attr, value);
+}
+</code></pre>
+<p>这样，当元素的属性发生了变化的时候，就会执行到断点，你就可以在断点的栈中找出调用的地方来~</p>
+<h3 id="Tips-3">Tips</h3><p>这种方法不保证在所有浏览器中有效，比如ios的safari 隐私模式下，我们就不可以修改<code>localStorage</code>方法</p>
+<h2 id="远程映射本地调试">远程映射本地调试</h2><p>当线上某个js/css出现问题，我们可以用代理的方式，将远程的文件代理到本地来实现远程映射调试。其实除了这个功能，还可以作为抓包工具，这在移动端是很重要的。推荐Mac用<code>charles Proxy</code>（<a href="http://www.charlesproxy.com/" target="_blank" rel="external">http://www.charlesproxy.com/</a>）， windows用户使用<code>fiddler</code>（<a href="http://fiddler2.com/" target="_blank" rel="external">http://fiddler2.com/</a>）</p>
+<p>这个就不多说了，直接上国内的几篇文章：</p>
+<ul>
+<li><a href="http://www.cnblogs.com/tankxiao/archive/2012/02/06/2337728.html" target="_blank" rel="external">http://www.cnblogs.com/tankxiao/archive/2012/02/06/2337728.html</a></li>
+<li><a href="http://www.cnblogs.com/TankXiao/p/3063871.html" target="_blank" rel="external">http://www.cnblogs.com/TankXiao/p/3063871.html</a></li>
+</ul>
+<p>原文阅读（本文没有完全翻译，有所扩展）：<a href="http://techblog.badoo.com/blog/2013/11/18/5-advanced-javascript-and-web-debugging-techniques-you-should-know-about/" target="_blank" rel="external">http://techblog.badoo.com/blog/2013/11/18/5-advanced-javascript-and-web-debugging-techniques-you-should-know-about/</a></p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>在前端开发中，调试技术是必不可少的技能，本文将介绍五种前端开发必备的调试技术。</p>
+<ol>
+<li>Weinre移动调试</li>
+<li>DOM 断点</li>
+<li>debugger断点</li>
+<li>native方法hook</li>
+<li>远程映射本地调试</li>
+</ol>
+<h2 id="Weinre">Weinre</h2><p>在移动上面开发调试是很复杂的，所以就有了<em>weinre</em>。安装<a href="http://people.apache.org/~pmuellr/weinre/docs/latest/">weinre</a>可以实现pc来调试手机页面，所以对于移动开发调试是很重要的哦~</p>
+<p><img src="http://people.apache.org/~pmuellr/weinre/docs/latest/images/weinre-demo.jpg" alt="http://people.apache.org/~pmuellr/weinre/docs/latest/images/weinre-demo.jpg"></p>
+<h3 id="安装weinre">安装weinre</h3><p>weinre可以通过npm来安装：</p>
+<pre><code class="bash">npm install -g weinre
+</code></pre>
+<p>安装完之后，可执行下面的命令来启动：</p>
+<pre><code class="bash">weinre --httpPort 8080 --boundHost -all-
+</code></pre>]]>
+    
+    </summary>
+    
+      <category term="javascript" scheme="http://js8.in/tags/javascript/"/>
+    
+      <category term="debug" scheme="http://js8.in/tags/debug/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[利用livestyle和chrome实现双向样式修改]]></title>
+    <link href="http://js8.in/2013/11/17/%E5%88%A9%E7%94%A8livestyle%E5%92%8Cchrome%E5%AE%9E%E7%8E%B0%E5%8F%8C%E5%90%91%E6%A0%B7%E5%BC%8F%E4%BF%AE%E6%94%B9/"/>
+    <id>http://js8.in/2013/11/17/利用livestyle和chrome实现双向样式修改/</id>
+    <published>2013-11-17T09:02:57.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>最近看<a href="http://t.cn/8DFQUsd" target="_blank" rel="external">老外的ppt</a>，看到了句话：</p>
+<blockquote>
+<p>Use tools. not rules!</p>
+</blockquote>
+<p>所以今天介绍个利器：liveStyle，liveStyle是Emmet团队开发的，Emmet就是大名鼎鼎的zen coding啊。</p>
+<p>其实在订阅的weekly里面早就介绍过livestyle，真正用起来还是看了上面老外的这个ppt，试用了下liveStyle，结果一下子就喜欢上了，如果你开发遇见了下面的问题就可以使用liveStyle了：</p>
+<ol>
+<li>在chrome DevTools中修改了样式，想同步到css文件中</li>
+<li>修改了css文件，不想刷新chrome，就可以实时看到效果</li>
+</ol>
+<p>嗯，livestyle解决了这两个问题，提高了开发效率！</p>
+<h2 id="livestyle安装">livestyle安装</h2><h3 id="安装sublime_text的liveStyle插件">安装sublime text的liveStyle插件</h3><p>在<code>package control</code>搜索<code>livestyle</code>就可以了，或者去<a href="http://livestyle.emmet.io/" target="_blank" rel="external">官方</a>下载</p>
+<h3 id="安装chrome扩展">安装chrome扩展</h3><p>通过<a href="https://chrome.google.com/webstore/detail/diebikgmpmeppiilkaijjbdgciafajmg" target="_blank" rel="external">这个网址</a>，安装livestyle，如果打不开，可能需要准备梯子，你懂的~ 感谢裆~</p>
+<p>安装后，在chrome中按<code>F12</code>打开DevTools就可以看到在<code>console</code>后面多了个<code>LiveStyle</code>面板。</p>
+<h2 id="使用livestyle">使用livestyle</h2><ol>
+<li>用sublime text 打开一个css文件，例如a.css</li>
+<li>随便打开个网址，然后<code>F12</code> 切换到LiveStyle</li>
+<li>选中<code>Enable LiveStyle for current page</code>，这时会把页面的所有css都列出来</li>
+<li>选择一个需要替换的css，在下拉框中选择要替换掉的sublime打开的css文件，例如：a.css；或者点击<code>add file</code>按钮</li>
+<li>这时候在sublime中修改a.css，就可以在chrome中实时看到效果；在chrome修改样式，也可以将修改同步到a.css文件中</li>
+</ol>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>最近看<a href="http://t.cn/8DFQUsd" target="_blank" rel="external">老外的ppt</a>，看到了句话：</p>
+<blockquote>
+<p>Use tools. not rules!</p>
+</blockqu]]>
+    </summary>
+    
+      <category term="工具" scheme="http://js8.in/tags/%E5%B7%A5%E5%85%B7/"/>
+    
+      <category term="livestyle" scheme="http://js8.in/tags/livestyle/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[推荐nodeppt：使用markdown语法来写网页ppt]]></title>
+    <link href="http://js8.in/2013/11/16/%E6%8E%A8%E8%8D%90nodeppt%EF%BC%9A%E4%BD%BF%E7%94%A8markdown%E8%AF%AD%E6%B3%95%E6%9D%A5%E5%86%99%E7%BD%91%E9%A1%B5ppt/"/>
+    <id>http://js8.in/2013/11/16/推荐nodeppt：使用markdown语法来写网页ppt/</id>
+    <published>2013-11-16T08:50:29.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p><a href="https://github.com/ksky521/nodePPT" target="_blank" rel="external">nodePPT</a> 是<a href="http://js8.in">@三水清</a>基于nodejs来写的网页PPT，之前的版本仅仅是html语法，现在可以支持通过<strong>markdown</strong>来写网页ppt了。</p>
+<h2 id="nodeppt_Demo">nodeppt Demo</h2><p>查看demo：<a href="http://qdemo.sinaapp.com/" target="_blank" rel="external">http://qdemo.sinaapp.com/</a></p>
+<h2 id="安装">安装</h2><p>nodeppt</p>
+<pre><code class="bash">npm install -g nodeppt
+</code></pre>
+<p>##使用nodeppt命令行</p>
+<h3 id="启动">启动</h3><pre><code class="bash">nodeppt start -p port
+# or
+nodeppt start -p port -d path/for/ppts
+</code></pre>
+<h3 id="创建">创建</h3><p>支持markdown语法快速创建网页幻灯片。</p>
+<pre><code class="bash">nodeppt create ppt-name
+</code></pre>
+<a id="more"></a>
+<p>按照提示输入基本信息后就可以创建，默认创建是markdown版本，如果需要创建html版本，可以使用：</p>
+<pre><code class="bash">nodeppt create ppt-name.html
+# or
+nodeppt create ppt-name.htm
+</code></pre>
+<h2 id="nodeppt_markdown语法">nodeppt markdown语法</h2><p>说明<br>nodeppt是支持<strong>marked</strong>语法的，但是为了制作出来更加完美的ppt，扩展了下面的语法</p>
+<h3 id="配置">配置</h3><p>基本配置如下：</p>
+<pre><code class="html">title: 这是演讲的题目
+speaker: 演讲者名字
+url: 可以设置链接
+transition: 转场效果，例如：zoomin
+files: 引入js和css的地址，如果有的话~自动放在页面底部
+</code></pre>
+<p><strong>目录关系</strong>：可以在md同级目录下创建img、js、css等文件夹，然后在markdown里面引用，nodeppt默认会先查找md文件同级目录下面的静态资源，没有再找默认的 <code>assets</code> 文件夹下静态内容</p>
+<p>支持的18种转场动画包括：</p>
+<ul>
+<li>horizontal3d</li>
+<li>horizontal</li>
+<li>vertical3d</li>
+<li>zoomin</li>
+<li>zoomout</li>
+<li>cards</li>
+<li>。。。</li>
+</ul>
+<p>如果设置单页动画，请参考下面的<strong>单页动画设置</strong>部分~</p>
+<h3 id="分页">分页</h3><p>通过<code>[slide]</code>作为每页ppt的间隔，如果需要添加单页背景，使用下面的语法：</p>
+<pre><code class="html">[slide style=&quot;background-image:url(&#39;/img/bg1.png&#39;)&quot;]
+# 这是个有背景的家伙
+## 我是副标题
+</code></pre>
+<h3 id="单页ppt上下布局">单页ppt上下布局</h3><pre><code class="html">[slide]
+## 主页面样式
+### ----是上下分界线
+----
+nodeppt是基于nodejs写的支持 **Markdown!** 语法的网页PPT
+
+nodeppt：https://github.com/ksky521/nodePPT
+</code></pre>
+<h3 id="代码格式化">代码格式化</h3><p>语法跟<strong>Github Flavored Markdown</strong> 一样~</p>
+<h3 id="单页动画设置">单页动画设置</h3><p>在md文件，顶部 <code>配置</code> 可以设置全局转场动画，如果要设置单页的转场动画，可以通过下面的语法</p>
+<pre><code class="html">[slide data-transition=&quot;vertical3d&quot;]
+## 这是一个vertical3d的动画
+</code></pre>
+<h3 id="插入html代码">插入html代码</h3><p>如果需要完全diy自己的ppt内容，可以markdown和html混编代码。例如：</p>
+<pre><code class="html">## 混编html和markdown
+----
+
+&lt;div class=&quot;file-setting&quot;&gt;
+    &lt;p&gt;这是html&lt;/p&gt;
+&lt;/div&gt;
+&lt;p id=&quot;css-demo&quot;&gt;这是css样式&lt;/p&gt;
+&lt;p&gt;使用&amp;#91;code]&amp;#91;/code]包裹的代码，会直接插入到页面&lt;/p&gt;
+&lt;p&gt;具体看下项目中 ppts/demo.md 代码&lt;/p&gt;
+&lt;script&gt;
+    function testScriptTag(){
+
+    }
+    console.log(typeof testScriptTag);
+&lt;/script&gt;
+&lt;style&gt;
+#css-demo{
+    color: red;
+}
+&lt;/style&gt;
+</code></pre>
+<h3 id="出入回调">出入回调</h3><p>前端的ppt，难免会在页面中演示一些demo，除了上面的插入html语法：<code>[code][/code]</code> 之外，还提供了<code>in-callback</code>和<code>out-callback</code>，分别用于：切换（切走）到当前ppt，执行的js函数名。例如：</p>
+<pre><code class="html">[slide data-outcallback=&quot;outcallback&quot; data-incallback=&quot;incallback&quot;]
+## 当进入此页，就执行incallback函数
+## 当离开此页面，就执行outcallback函数
+</code></pre>
+<h3 id="表格实例">表格实例</h3><pre><code class="html">### 市面上主要的css预处理器：less\sass\stylus
+---
+ |less| sass | stylus
+:-------|:------:|-------:|--------
+环境 |js/nodejs | Ruby | nodejs
+扩展名 | .less | .sass/.scss | .styl
+特点 | 老牌，用户多，支持js解析 | 功能全，有成型框架，发展快 | 语法多样，小众
+案例/框架 | [Bootstrap](http://getbootstrap.com/) | [compass](http://compass-style.org) [bourbon](http://bourbon.io) |
+</code></pre>
+<h3 id="插入iframe">插入iframe</h3><p>使用<code>data-src</code>作为iframe的url，这样只有切换到当前页才会加载url内容~</p>
+<pre><code class="html">&lt;iframe data-src=&quot;http://www.google.com/doodle4google/resources/history.html&quot; src=&quot;about:blank;&quot;&gt;&lt;/iframe&gt;
+</code></pre>
+<h2 id="导出ppt">导出ppt</h2><p>这么高端大气上档次的ppt，怎么能不导出分享给大家呢？？</p>
+<p>导出ppt有两种，一种是<strong>pdf版</strong>，一种是<strong>html版</strong></p>
+<h3 id="pdf版">pdf版</h3><p>需要安装<a href="http://phantomjs.org/" target="_blank" rel="external">phantomJS</a>。</p>
+<pre><code class="bash"># 安装phantomjs，如果安装了，请忽略
+npm install -g phantomjs
+# 启动nodeppt server
+nodeppt start
+# 导出文件
+nodeppt pdf http://127.0.0.1:8080/md/demo.md -o a.pdf
+</code></pre>
+<h3 id="html版">html版</h3><pre><code class="bash"># 使用generate命令
+nodeppt generate filepath
+# 导出全部，包括nodeppt的js、img和css文件夹
+# 默认导出在publish文件夹
+nodeppt generate ./ppts/demo.md -a
+# 指定导出文件夹
+nodeppt generate ./ppts/demo.md -a -o output/path
+</code></pre>
+<p>导出目录下所有ppt，并且生成ppt list首页：</p>
+<pre><code class="bash">nodeppt path -o output/path -a
+</code></pre>
+<h3 id="示例">示例</h3><p>类似下面的语法：(更多用法查看ppts/demo.md文件)</p>
+<pre><code class="html">title: nodeppt markdown 演示
+speaker: Theo Wang
+url: https://github.com/ksky521/nodePPT
+transition: zoomin
+
+[slide]
+
+# 封面样式
+## h1是作为封面用的，内部的都用h2
+
+[slide style=&quot;background-image:url(&#39;/img/bg1.png&#39;)&quot;]
+
+# 背景图片 {:&amp;.flexbox.vleft}
+## 使用方法：&amp;#91;slide style=&quot;background-image:url(&#39;/img/bg1.png&#39;)&quot;&amp;#93;
+
+[slide]
+
+## 主页面样式
+### ----是上下分界线
+----
+
+nodeppt是基于nodejs写的支持 **Markdown!** 语法的网页PPT
+
+nodeppt：https://github.com/ksky521/nodePPT
+
+[slide]
+
+什么？这些功能还不够用？
+
+极客模式：查看源码的nodeppt.js，相信你会找到牛逼的手机互动（摇一摇换页）功能
+
+查看项目目录ppts获取更多帮助信息
+</code></pre>
+<p>更多demo，查看 <code>ppts</code> 目录的demo</p>
+<h2 id="查看帮助">查看帮助</h2><pre><code class="bash">nodeppt -h
+</code></pre>
+<h2 id="demo演示_&amp;_使用方法">demo演示 &amp; 使用方法</h2><ul>
+<li>执行 <code>nodeppt start</code></li>
+<li>访问 <a href="http://127.0.0.1:8080/" target="_blank" rel="external">http://127.0.0.1:8080/</a></li>
+<li>查看在线demo：<a href="http://qdemo.sinaapp.com/" target="_blank" rel="external">http://qdemo.sinaapp.com/</a></li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><a href="https://github.com/ksky521/nodePPT">nodePPT</a> 是<a href="http://js8.in">@三水清</a>基于nodejs来写的网页PPT，之前的版本仅仅是html语法，现在可以支持通过<strong>markdown</strong>来写网页ppt了。</p>
+<h2 id="nodeppt_Demo">nodeppt Demo</h2><p>查看demo：<a href="http://qdemo.sinaapp.com/">http://qdemo.sinaapp.com/</a></p>
+<h2 id="安装">安装</h2><p>nodeppt</p>
+<pre><code class="bash">npm install -g nodeppt
+</code></pre>
+<p>##使用nodeppt命令行</p>
+<h3 id="启动">启动</h3><pre><code class="bash">nodeppt start -p port
+# or
+nodeppt start -p port -d path/for/ppts
+</code></pre>
+<h3 id="创建">创建</h3><p>支持markdown语法快速创建网页幻灯片。</p>
+<pre><code class="bash">nodeppt create ppt-name
+</code></pre>]]>
+    
+    </summary>
+    
+      <category term="nodejs" scheme="http://js8.in/tags/nodejs/"/>
+    
+      <category term="PPT" scheme="http://js8.in/tags/PPT/"/>
+    
+      <category term="王婆卖瓜" scheme="http://js8.in/categories/%E7%8E%8B%E5%A9%86%E5%8D%96%E7%93%9C/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[谈敏捷开发]]></title>
+    <link href="http://js8.in/2013/11/06/%E8%B0%88%E6%95%8F%E6%8D%B7%E5%BC%80%E5%8F%91/"/>
+    <id>http://js8.in/2013/11/06/谈敏捷开发/</id>
+    <published>2013-11-06T10:48:18.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>这年头不做敏捷开发都不好意思说自己是做软件开发的。很多人都知道<strong>敏捷开发</strong>或者项目就在敏捷开发中，但是越来越多的人对敏捷开发表示不理解了。我经常听身边的人问：敏捷是什么？究竟什么才是敏捷开发？难道敏捷开发就是这样吗？</p>
+<p>这就跟早上正常点上个班，周末加个班就喊“狼性”是一个道理：很多人认为早上开站立会就是敏捷了！</p>
+<h2 id="敏捷开发和每日站会的关系">敏捷开发和每日站会的关系</h2><p>如果要问：敏捷开发和站会是什么关系？我想说：的确有关系，但要知道不是你把敏捷的流程都走一遍就真的敏捷了。</p>
+<p>scrum会议可以分为：sprint计划会，每日站会，评审会和回顾会。</p>
+<a id="more"></a>
+<p>个人认为：敏捷提到的站会只是一天固定时间沟通的会议，主要目的还是跟进进度、暴漏问题，PO和SM意图通过站会来完成自己的职责：</p>
+<ul>
+<li>协调资源，解决项目的障碍</li>
+<li>保证项目进度</li>
+<li>保证团队内角色之间的协作</li>
+<li>团队跟其他团队的接口人，协调沟通</li>
+</ul>
+<p>而现实中的站会可能是下面的样子：</p>
+<ul>
+<li>PM忙着改需求</li>
+<li>RD讨论解决方案</li>
+<li>UE听不懂，在打哈欠</li>
+<li>QA在报bug</li>
+</ul>
+<h2 id="敏捷开发究竟是怎样的">敏捷开发究竟是怎样的</h2><p>敏捷开发是一套经过多年实践而总结出来的一套<strong>方法论</strong>。所以不要神化，更不要跟风，适合自己的team就好。</p>
+<p>敏捷总结了一些项目中常常遇见的问题，并且想通过敏捷的流程来避免这些问题。而现在很多公司很多项目用了敏捷（或者敏捷扩展版），实际参加敏捷的童鞋并没有“敏捷”，而是在抱怨：为什么这么多流程？为什么这么多会议？</p>
+<h2 id="究竟错在哪里？？！">究竟错在哪里？？！</h2><p>往往大公司一个项目需要牵扯太多人，一次（预）发布会可以开<strong>5个小时</strong>，涉及到的人都参加，前面的人七嘴八舌各抒己见，后面的人各干个事。PO都不知道自己想要的是怎样的一个产品，最多的情况是在听取了意见后做了妥协。</p>
+<p>团队太大，还会出现一些<strong>鸡同鸭讲</strong>的会议，比如每日站会：先是UE，然后RD，后是QA，再。。。</p>
+<p>这样前面讲的事情，根本自己都不知道干啥，听不懂，那为啥还要非拉在一起开会呢？</p>
+<h3 id="team太大">team太大</h3><p>最大的错误是team太大，忽略了个体。敏捷有个说法：2个披萨。也就说团队人数要控制在两个披萨够吃内。</p>
+<p>敏捷提倡对团队人的信任，充分调动团队中每个人的积极性，发挥最大的效率。</p>
+<p>当一个项目team太大的时候，可以考虑拆成几个敏捷团队来执行，团队之间共享角色，来实现沟通。比如：UE开UE的会，而参加RD的会就会昏昏欲睡；何必呢~当涉及到其他团队角色的时候可以叫上一起啊。</p>
+<p>其实这在scrum里面有个专业术语：scrum of scrums。我的想得到，大佬想不到吗？当然我相信他们也想得到，不过没有什么比成功更具有说服力。所以也许坚持经验更重要。</p>
+<h3 id="太看重流程和工具">太看重流程和工具</h3><p>比如说燃起图（燃尽图）这件事，就是为了大家看到每天的进度，而老一些“敏捷er”往往对新“敏捷er”说：task要拆的够细，每天都有事情做，每天都有事情完成，要燃起图好看。</p>
+<p>你是知道的中国人都是很聪明的，于是会想尽办法“造”task，因为我要保证第二天我的燃起图正常，不然会被点名批评的，被批评了KPI怎么办？</p>
+<p>对于流程来说，当流程太复杂的时候，我们应该勇于提出来，去精简。当一个新的SM接棒的时候，应该审视之前的流程，是否合理，是否需要调整。</p>
+<p>现在往往是大家觉得项目做成了，leader升级了，留下的就是宝贵的经验，下一个leader就会按照这个流程来做，尽快他也深受其害，但是这是“宝贵经验”，之前的leader就是这样成功的，为什么我们要颠覆呢？</p>
+<h3 id="并行还是串行">并行还是串行</h3><p>也许好几个项目并行，一个角色穿梭于多个项目中，这样貌似在并行，其实人还是那个人，他不可能同时做两件事情，这不是一种提高效率的事情。人只有在专注一件事情上，才能发挥最大的效率。多个事情并行会分散精力。这就像<strong>番茄钟</strong>要25分钟专注一件事情的道理一样的。</p>
+<h2 id="穷则变，变则通">穷则变，变则通</h2><p>为啥大家都怨声载道还要摸黑走下去呢？该变就变！</p>
+<p>SM需要做的是：要每个角色效率都最大化利用，为角色提供更舒适的工作环境（包括流程）。</p>
+<blockquote>
+<p><strong>个体和互动</strong>高于流程和工具<br><strong>工作的软件</strong> 高于详尽的文档<br><strong>客户合作</strong> 高于合同谈判<br><strong>响应变化</strong> 高于遵循计划</p>
+</blockquote>
+<p>甚至我想应不应该把敏捷开发跟KPI和个人职业发展更好的结合呢？</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>这年头不做敏捷开发都不好意思说自己是做软件开发的。很多人都知道<strong>敏捷开发</strong>或者项目就在敏捷开发中，但是越来越多的人对敏捷开发表示不理解了。我经常听身边的人问：敏捷是什么？究竟什么才是敏捷开发？难道敏捷开发就是这样吗？</p>
+<p>这就跟早上正常点上个班，周末加个班就喊“狼性”是一个道理：很多人认为早上开站立会就是敏捷了！</p>
+<h2 id="敏捷开发和每日站会的关系">敏捷开发和每日站会的关系</h2><p>如果要问：敏捷开发和站会是什么关系？我想说：的确有关系，但要知道不是你把敏捷的流程都走一遍就真的敏捷了。</p>
+<p>scrum会议可以分为：sprint计划会，每日站会，评审会和回顾会。</p>]]>
+    
+    </summary>
+    
+      <category term="工作" scheme="http://js8.in/tags/%E5%B7%A5%E4%BD%9C/"/>
+    
+      <category term="效率" scheme="http://js8.in/tags/%E6%95%88%E7%8E%87/"/>
+    
+      <category term="纯属瞎掰" scheme="http://js8.in/categories/%E7%BA%AF%E5%B1%9E%E7%9E%8E%E6%8E%B0/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[博客迁移到github]]></title>
+    <link href="http://js8.in/2013/11/02/%E5%8D%9A%E5%AE%A2%E8%BF%81%E7%A7%BB%E5%88%B0github/"/>
+    <id>http://js8.in/2013/11/02/博客迁移到github/</id>
+    <published>2013-11-02T14:16:25.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>用了好久wordpress，从开始用别人的主题，到后来自己做wordpress主题，博客也有小半年没更新了。其实很早就有迁移的想法了，但是一直很懒，这次趁着数据库出错，就迁移到github了。</p>
+<p>这样一来写博客，写wiki，甚至写ppt都用<code>markdown</code>语法，关于用markdown语法写ppt，可以看下我写的一个<a href="https://github.com/ksky521/nodePPT" target="_blank" rel="external">nodeppt</a>，可以方便用markdown语法来写网页版的幻灯片，效果还是不错哈。</p>
+<p>这次使用的是hexo，hexo是台湾同胞开发的，用起来还是很顺手的。之前wordpress的内容，可以通过xml导入。</p>
+<p>本来300多篇的文章，从08年在学校开始，从<code>2fool.cn</code>开始，一直到现在的<code>js8.in</code>，经历了5个多年头了，当然文章也每次迁移少一部分，这次迁移只保留了不到200篇。</p>
+<a id="more"></a>
+<p>因为之前的文章有一部分html格式用hexo的插件转不过来，所以自己简单写了个脚本来转，内容如下：</p>
+<pre><code class="node">var fs = require(&#39;fs&#39;);
+var path = require(&#39;path&#39;);
+var _ = require(&#39;../node_modules/hexo-migrator-wordpress/node_modules/underscore/underscore.js&#39;);
+
+function recurse(rootdir, callback, subdir, judgeFunction) {
+    var abspath = subdir ? path.join(rootdir, subdir) : rootdir;
+    judgeFunction = typeof judgeFunction === &#39;function&#39; ? judgeFunction : function() {
+        return true;
+    };
+    fs.readdirSync(abspath).forEach(function(filename) {
+        var filepath = path.join(abspath, filename);
+        if (fs.statSync(filepath).isDirectory() &amp;&amp; judgeFunction(filename)) {
+            recurse(rootdir, callback, unixifyPath(path.join(subdir, filename)), judgeFunction);
+        } else {
+            judgeFunction(filename) &amp;&amp; callback(unixifyPath(filepath), rootdir, subdir, filename, judgeFunction);
+        }
+    });
+
+}
+
+var win32 = process.platform === &#39;win32&#39;;
+var unixifyPath = function(filepath) {
+    if (win32) {
+        return filepath.replace(/\\/g, &#39;/&#39;);
+    } else {
+        return filepath;
+    }
+};
+var EOL = &#39;\n&#39;;
+
+var startTime = +new Date(&#39;2011-08-04 00:00:00&#39;);
+recurse(&#39;./_posts&#39;, function(abspath, rootdir, subdir, filename) {
+    var content = fs.readFileSync(abspath, &#39;utf-8&#39;).toString();
+
+    var data = content.split(&#39;---&#39;)[0];
+    var obj = parseCover(data, abspath);
+    var title = obj.title;
+    var date = obj.date;
+    var id = obj.id;
+    var time = +new Date(date);
+    if (time &lt; startTime) {
+        var arr = content.split(&#39;---&#39;);
+        arr.splice(0, 1);
+        var postTag = obj.tag;
+        // console.log(postTag);
+        if (postTag.length) {
+            postTag = &#39;\n- &#39; + _.uniq(postTag).join(&#39;\n- &#39;);
+        }
+        content = [
+            &#39;title: &#39; + title,
+            &#39;id: &#39; + id,
+            &#39;date: &#39; + date,
+            &#39;tags:&#39; + postTag,
+            &#39;categories:\n- &#39; + (obj.cate === &#39;&#39; ? &#39;乱七八糟&#39; : obj.cate),
+            &#39;---&#39;,
+            arr.join(&#39;---&#39;).trim()
+        ];
+        content = content.join(EOL);
+        // console.log(obj);
+        content = content.replace(/&lt;pre lang=[&quot;|&#39;](.*)[&quot;|&#39;]&gt;/g, &#39;\n```$1\n&#39;)
+            .replace(/&lt;\/pre&gt;/g, &#39;```&#39;)
+            .replace(/http:\/\/js8\.in\/wp-content\/uploads/g, &#39;/uploads&#39;)
+            .replace(/\[\/caption\]/g, &#39;&#39;)
+            .replace(/\[caption.*?\]/g, &#39;&#39;);
+        // console.log(content);
+        fs.writeFileSync(abspath, content);
+        console.log(title);
+    }
+});
+
+
+function parseCover(str, url) {
+    var arr = str.split(&#39;categories:&#39;)[1];
+    arr = arr.split(EOL);
+    var cate = &#39;&#39;,
+        tags = [];
+    var cateReg = /-\s+(.+)/;
+    arr.forEach(function(val) {
+        if (val = cateReg.exec(val)) {
+            var tag = val[1].toLowerCase();
+            if (tag === &#39;web前端开发&#39; || tag === &#39;css&#39; || tag === &#39;javascript&#39; || tag === &#39;前端开发&#39;) {
+                cate = &#39;前端开发&#39;;
+            } else if (tag === &#39;php&#39; || tag === &#39;后端运维&#39;) {
+                cate = &#39;后端运维&#39;;
+            }
+            if (tag === &#39;后端运维&#39; || tag === &#39;前端开发&#39; || tag === &#39;王婆卖瓜&#39; || tag === &#39;读书笔记&#39;) {
+                return;
+            }
+            // if (tag === &#39;更新公告&#39;) {
+            //     fs.unlink(url);
+            // }
+            tags.push(tag);
+        }
+    });
+    // console.log(tags, cate);
+    str = str.split(EOL);
+    var obj = {
+        tag: tags,
+        cate: cate
+    };
+    var reg = /(\w+)\s?:\s?(.+)/;
+    str.forEach(function(val) {
+        if (val = reg.exec(val)) {
+            obj[val[1]] = val[2];
+        }
+    });
+    return obj;
+}
+</code></pre>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>用了好久wordpress，从开始用别人的主题，到后来自己做wordpress主题，博客也有小半年没更新了。其实很早就有迁移的想法了，但是一直很懒，这次趁着数据库出错，就迁移到github了。</p>
+<p>这样一来写博客，写wiki，甚至写ppt都用<code>markdown</code>语法，关于用markdown语法写ppt，可以看下我写的一个<a href="https://github.com/ksky521/nodePPT">nodeppt</a>，可以方便用markdown语法来写网页版的幻灯片，效果还是不错哈。</p>
+<p>这次使用的是hexo，hexo是台湾同胞开发的，用起来还是很顺手的。之前wordpress的内容，可以通过xml导入。</p>
+<p>本来300多篇的文章，从08年在学校开始，从<code>2fool.cn</code>开始，一直到现在的<code>js8.in</code>，经历了5个多年头了，当然文章也每次迁移少一部分，这次迁移只保留了不到200篇。</p>]]>
+    
+    </summary>
+    
+      <category term="博客" scheme="http://js8.in/tags/%E5%8D%9A%E5%AE%A2/"/>
+    
+      <category term="大事记" scheme="http://js8.in/categories/%E5%A4%A7%E4%BA%8B%E8%AE%B0/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[FIS和FISP使用心得]]></title>
+    <link href="http://js8.in/2013/11/02/fis%E5%92%8Cfisp%E4%BD%BF%E7%94%A8%E5%BF%83%E5%BE%97/"/>
+    <id>http://js8.in/2013/11/02/fis和fisp使用心得/</id>
+    <published>2013-11-02T10:20:10.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p>fis的wiki整理的不是很好，结合最近几天的体会，整理了FIS常用的功能，加上自己对fis的理解，整理了这篇文章</p>
+<h2 id="FIS_和_FISP">FIS 和 FISP</h2><p>fis是百度的开源的前端开发解决方案，另外还有个fisp（即fis-plus，前身是fis-pc），fisp可以说是百度业务定制版，主要集成（并扩展）了smarty模板，本地调试等功能。</p>
+<p>fisp是在fis基础上做的一层封装，订制了一些 <code>config</code> 配置，所以一些fis的配置，在fisp里面是会自动忽略，不会生效的，比如说jswraper配置。</p>
+<h2 id="FIS原理">FIS原理</h2><p>fis其实是一个 <code>半成品</code> ，只有经过更多的包装（例如插件）才能发挥最大的作用，fis的核心是生成的 <code>map.json</code> ，很多想法可以通过 <code>map.json</code> 这个表来实现。比如我自己订制的require inline方式。</p>
+<p>fisp结合 <code>map.json</code> 和 <code>FISSource.class.php</code> ，对smarty语法进行了扩展，扩展出来了 html、widget、require、script等smarty自定义标签。</p>
+<p>想了解详情的童鞋，可以直接看下fisp的 <code>plugin</code> 。</p>
+<h2 id="FISP环境部署">FISP环境部署</h2><h3 id="安装">安装</h3><ul>
+<li>安装node环境</li>
+<li>配置java环境，并放入环境变量</li>
+<li>安装php环境，并且将php.exe放进环境变量</li>
+</ul>
+<p>然后进入cmd，依次执行：</p>
+<pre><code class="shell">#安装fis-plus
+$ npm install -g fis-plus
+#安装fis-plus调试环境
+$ fisp server install pc
+# 启动fisp
+$ fisp server start
+# 这时应该会自动打开系统默认浏览器访问127.0.0.1
+# 查看www路径
+$ fisp server open
+# 清理www路径，慎用，会清理掉之前安装的调试环境
+$ fisp server clean
+</code></pre>
+<a id="more"></a>
+<h3 id="fis部署">fis部署</h3><p><code>fisp release</code> 有很多参数，具体可以通过 <code>fisp release -h</code> 查看下。</p>
+<h4 id="常用的参数">常用的参数</h4><ul>
+<li>-o 压缩文件/优化图片等</li>
+<li>-w watch功能</li>
+<li>-m md功能</li>
+</ul>
+<h2 id="FISP本地模板调试">FISP本地模板调试</h2><p>fisp支持本地模板调试，每个模块下，可以放置test文件夹，作为调试数据，支持json和php格式，fe童鞋当然推荐JSON数据（注意严格json格式哦）了。</p>
+<p>本地模板调试就是使用自己写的smarty模板变量，渲染出想要的页面，可以在phper没有拼好数据的前提下，将前端模板提前测试好。</p>
+<h3 id="安装chrome调试插件">安装chrome调试插件</h3><p>为了方便，简单写了个 chrome调试插件，调试时，在当前tab下，点击下插件icon即可。如果其他浏览器，可以通过添加浏览器书签方式：</p>
+<pre><code class="javascript">javascript: (function() {var d = new Date();d.setFullYear(d.getFullYear() + 1);document.cookie=&#39;FIS_DEBUG_DATA=4f10e208f47bfb4d35a5e6f115a6df1a;path=/;expires=&#39; + d.toGMTString() + &#39;&#39;;location.reload(); })();
+</code></pre>
+<p>原理很简单，就是写个cookie，然后reload下页面。</p>
+<h3 id="添加要测试的数据">添加要测试的数据</h3><p>在调试数据页面，添加要测试的数据，点击 <code>save</code> 就会保存到对应的路径，点击顶部右上角的 <code>render</code> 按钮就可以看到添加了测试数据的页面。</p>
+<p>如果要想把数据放入项目对应模块的test文件夹（专门测试文件夹，不会上线）中，可以手动copy出来（<code>fisp server open</code>打开路径，然后复制）。</p>
+<h2 id="FIS高级教程">FIS高级教程</h2><h3 id="fis-conf-js">fis-conf.js</h3><p>fis的关键配置，具体配置查看下fis的wiki，另外可以看下其他fis项目学习下配置</p>
+<h3 id="namespace-inline-json">namespace-inline.json</h3><p>这是自己写的插件生成的map，此map会收集js和css，然后集合在此文件中，方便require调用直接从此表中读取数据，而不用通过php的file_get_contents，提升性能。</p>
+<p>此表生成方式：</p>
+<pre><code class="javascript">fis.config.set(&#39;modules.postpackager&#39;, function(ret, conf, settings, opt) {
+    var inlineMap = fis.util.clone(ret.map);
+    var sourceMap = {};
+    //blablabla
+    fis.util.map(inlineMap.res, function(id, res) {
+        if (res.type === &#39;js&#39; || res.type === &#39;css&#39;) {
+            var id = ret.ids[id];
+            sourceMap[res.uri] = {
+                content: id.getContent(),
+                hash: id.getHash()
+            };
+        } else {
+            delete inlineMap.res[id];
+        }
+    });
+    var ns = fis.config.get(&#39;namespace&#39;);
+    var inlineMapFile = fis.file(fis.project.getProjectPath(ns + &#39;-inline.json&#39;));
+    if (inlineMapFile.release) {
+        inlineMapFile.setContent(JSON.stringify(sourceMap, null, opt.optimize ? null : 4));
+        ret.pkg[inlineMapFile.subpath] = inlineMapFile;
+    }
+});
+</code></pre>
+<h3 id="server-conf">server.conf</h3><p><code>server.conf</code> 是方便调试用的，对应编译到<code>server-conf/${namespace}-server.conf</code>目录下，<code>server.conf</code>的书写规则类似<code>.htaccess</code>。</p>
+<p>在使用时，需要首先安装 <code>rewrite</code>:</p>
+<pre><code class="bash">$ fisp server install rewrite
+</code></pre>
+<p>如果安装了pc（<code>fisp server install pc</code>），那么会自动带有这个功能的。</p>
+<ol>
+<li>对外提供match方法，供其他调试模块调用，具体方法参考代码注释说明。</li>
+<li>默认读取根目录server.conf文件，书写方式是：<ul>
+<li><code>rewrite</code>和<code>redirect</code>开头的会被翻译成一条匹配规则，自上而下的匹配。所有非rewrite和redirect开头的会被当做注释处理。</li>
+<li><code>rewrite</code>： 匹配规则后转发到一个文件</li>
+<li><code>redirect</code>： 匹配规则后重定向到另一个url</li>
+</ul>
+</li>
+</ol>
+<p>例如下面的：</p>
+<pre><code class="text">rewrite ^\/news\?.*tn\=[a-zA-Z0-9]+.* app/data/news.php
+redirect ^\/index\?.* /photo/index/a
+rewrite ^\/(.*)\?.*  app/data/$1.php
+</code></pre>
+<h4 id="调试原理">调试原理</h4><p>fis会将请求都扔给www目录下面的index.php，index.php 会引入rewrite模块来解析server.conf文件，如果解析成功就按照rewrite格式来转发请求。</p>
+<h2 id="参考文档">参考文档</h2><ul>
+<li><a href="https://github.com/fis-dev/fis/wiki/" target="_blank" rel="external">https://github.com/fis-dev/fis/wiki/</a></li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>fis的wiki整理的不是很好，结合最近几天的体会，整理了FIS常用的功能，加上自己对fis的理解，整理了这篇文章</p>
+<h2 id="FIS_和_FISP">FIS 和 FISP</h2><p>fis是百度的开源的前端开发解决方案，另外还有个fisp（即fis-plus，前身是fis-pc），fisp可以说是百度业务定制版，主要集成（并扩展）了smarty模板，本地调试等功能。</p>
+<p>fisp是在fis基础上做的一层封装，订制了一些 <code>config</code> 配置，所以一些fis的配置，在fisp里面是会自动忽略，不会生效的，比如说jswraper配置。</p>
+<h2 id="FIS原理">FIS原理</h2><p>fis其实是一个 <code>半成品</code> ，只有经过更多的包装（例如插件）才能发挥最大的作用，fis的核心是生成的 <code>map.json</code> ，很多想法可以通过 <code>map.json</code> 这个表来实现。比如我自己订制的require inline方式。</p>
+<p>fisp结合 <code>map.json</code> 和 <code>FISSource.class.php</code> ，对smarty语法进行了扩展，扩展出来了 html、widget、require、script等smarty自定义标签。</p>
+<p>想了解详情的童鞋，可以直接看下fisp的 <code>plugin</code> 。</p>
+<h2 id="FISP环境部署">FISP环境部署</h2><h3 id="安装">安装</h3><ul>
+<li>安装node环境</li>
+<li>配置java环境，并放入环境变量</li>
+<li>安装php环境，并且将php.exe放进环境变量</li>
+</ul>
+<p>然后进入cmd，依次执行：</p>
+<pre><code class="shell">#安装fis-plus
+$ npm install -g fis-plus
+#安装fis-plus调试环境
+$ fisp server install pc
+# 启动fisp
+$ fisp server start
+# 这时应该会自动打开系统默认浏览器访问127.0.0.1
+# 查看www路径
+$ fisp server open
+# 清理www路径，慎用，会清理掉之前安装的调试环境
+$ fisp server clean
+</code></pre>]]>
+    
+    </summary>
+    
+      <category term="fis" scheme="http://js8.in/tags/fis/"/>
+    
+      <category term="fisp" scheme="http://js8.in/tags/fisp/"/>
+    
+      <category term="前端工具" scheme="http://js8.in/tags/%E5%89%8D%E7%AB%AF%E5%B7%A5%E5%85%B7/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[Gruntjs——前端任务管理工具]]></title>
+    <link href="http://js8.in/2013/04/16/gruntjs%E2%80%94%E2%80%94%E5%89%8D%E7%AB%AF%E4%BB%BB%E5%8A%A1%E7%AE%A1%E7%90%86%E5%B7%A5%E5%85%B7/"/>
+    <id>http://js8.in/2013/04/16/gruntjs——前端任务管理工具/</id>
+    <published>2013-04-16T13:09:34.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p><a href="http://www.gruntjs.com" target="_blank" rel="external">Gruntjs</a>是前端项目构建工具，基于node的命令行工具。很多公司或者js项目都是用<strong>gruntjs</strong>来搭建，例如jQuery，twitter，Qunit等。主要功能有：</p>
+<ul>
+<li>合并文件</li>
+<li>压缩html/js/css/图片文件</li>
+<li>语法检测</li>
+<li>单元测试（基于Qunit）</li>
+<li>watch功能</li>
+</ul>
+<p>相对于Ant的打包工具，grunt更加灵活，语法采用json，比xml语法更加简洁，作为前端工程师可能更喜欢写json。</p>
+<h2 id="GruntJS的安装">GruntJS的安装</h2><p>Grunt是基于nodejs的，所以安装GruntJS之前，需要保证你的电脑有<a href="http://nodejs.org/" target="_blank" rel="external">nodejs环境</a>，node环境比之前安装简单多了，现在windows平台只需要下载node安装程序，一路next就可以了。</p>
+<a id="more"></a>
+<h4 id="安装grunt-cli">安装grunt-cli</h4><p>在命令行中，执行<code>npm install -g grunt-cli</code>，来安装grunt-cli</p>
+<h4 id="安装grunt插件">安装grunt插件</h4><p>在项目路径下的命令行中，输入<code>npm install grunt-plugin-name --save-dev</code>就可以完成插件安装，或者直接修改grunt的package.json，然后执行<code>npm install</code>，npm会自动安装想用插件。</p>
+<h2 id="创建GruntJS管理项目">创建GruntJS管理项目</h2><p>每个GruntJS都包括两个文件：</p>
+<ul>
+<li>package.json：依赖模块+你可能用到的变量和说明，例如：version、name</li>
+<li>Gruntfile.js：node module写法的任务管理文件</li>
+</ul>
+<h3 id="package-json">package.json</h3><p>一个典型的package.json内容如下：</p>
+<pre><code class="javascript">  {
+    &quot;name&quot;: &quot;my-project-name&quot;,
+    &quot;version&quot;: &quot;0.1.0&quot;,
+    &quot;devDependencies&quot;: {
+      &quot;grunt&quot;: &quot;~0.4.0&quot;,
+      &quot;grunt-contrib-jshint&quot;: &quot;~0.1.0&quot;,
+      &quot;grunt-contrib-concat&quot;: &quot;~0.1.1&quot;,
+      &quot;grunt-contrib-uglify&quot;: &quot;~0.1.0&quot;,
+      &quot;grunt-contrib-watch&quot;: &quot;~0.1.4&quot;
+    }
+  }
+</code></pre>
+<p>如果安装了新的插件，那么这个package.json会自动更新的，或者修改它，然后执行<code>npm install</code>，也可以安装对应的插件。</p>
+<h3 id="Gruntfile-js">Gruntfile.js</h3><p>Gruntfile.js是node module格式的任务管理文件，例如：</p>
+<pre><code class="javascript">module.exports = function(grunt) {
+  // 以下代码初始化Grunt任务
+  grunt.initConfig({
+    // js语法检查
+    jshint: { /*…*/ },
+    // 需要合并的任务
+    concat: { /*…*/ },
+    // 压缩
+    uglify: { /*…*/ },
+    // watch任务
+    watch: { /*…*/ }
+  });
+
+  // 加载package.json中的想用插件
+  grunt.loadNpmTasks(&#39;grunt-contrib-jshint&#39;);
+  grunt.loadNpmTasks(&#39;grunt-contrib-concat&#39;);
+  grunt.loadNpmTasks(&#39;grunt-contrib-uglify&#39;);
+  grunt.loadNpmTasks(&#39;grunt-contrib-watch&#39;);
+
+  // 注册一个任务，第二参数可以是数组或者字符串
+  // 默认会执行default任务.
+  grunt.registerTask(&#39;default&#39;, [&#39;jshint&#39;, &#39;concat&#39;, &#39;uglify&#39;]);
+};
+</code></pre>
+<h2 id="常用Grunt任务介绍">常用Grunt任务介绍</h2><h3 id="使用JSHint检查js语法">使用JSHint检查js语法</h3><p>JSHint是JSLint的一个分支，可以用于js语法规则、错误检测。</p>
+<pre><code class="javascript">jshint: {
+  files: [&#39;Gruntfile.js&#39;, &#39;lib/**/*.js&#39;]
+},
+</code></pre>
+<p>上面的代码可以检测lib文件夹下所有二级路径的js语法内容。另外后面可以使用watch任务，实时检测语法。</p>
+<h3 id="合并任务">合并任务</h3><p>concat是合并任务，可以合并打包js，css文件。</p>
+<pre><code class="javascript">concat: {
+  js: {
+    src: [&#39;lib/module1.js&#39;, &#39;lib/module2.js&#39;, &#39;lib/plugin.js&#39;],
+    dest: &#39;dist/script.js&#39;
+  }
+  css: {
+    src: [&#39;style/normalize.css&#39;, &#39;style/base.css&#39;, &#39;style/theme.css&#39;],
+    dest: &#39;dist/screen.css&#39;
+  }
+},
+</code></pre>
+<h3 id="使用uglifyjs压缩js文件">使用uglifyjs压缩js文件</h3><p>uglifyjs就不用介绍了，jQuery就是用它压缩的。</p>
+<pre><code class="javascript">uglify: {
+  dist: {
+    src: [&#39;&lt;%= concat.js.dest %&gt;&#39;],
+    dest: &#39;dist/script.min.js&#39;
+  }
+},
+</code></pre>
+<h3 id="watch功能">watch功能</h3><p>watch功能是Grunt的实时处理任务，当监控的文件发生变化的时候，则执行相应的任务。</p>
+<pre><code class="javascript">watch: {
+  files: &#39;&lt;%= jshint.files %&gt;&#39;,
+  tasks: &#39;jshint&#39;
+},
+</code></pre>
+<p>除了上面的任务外，还有<a href="http://gruntjs.com/plugins" target="_blank" rel="external">很多插件</a>，参考文章《<a href="http://js8.in/1122.html">双屏切图：使用livereload实现自动刷新</a>》</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><a href="http://www.gruntjs.com">Gruntjs</a>是前端项目构建工具，基于node的命令行工具。很多公司或者js项目都是用<strong>gruntjs</strong>来搭建，例如jQuery，twitter，Qunit等。主要功能有：</p>
+<ul>
+<li>合并文件</li>
+<li>压缩html/js/css/图片文件</li>
+<li>语法检测</li>
+<li>单元测试（基于Qunit）</li>
+<li>watch功能</li>
+</ul>
+<p>相对于Ant的打包工具，grunt更加灵活，语法采用json，比xml语法更加简洁，作为前端工程师可能更喜欢写json。</p>
+<h2 id="GruntJS的安装">GruntJS的安装</h2><p>Grunt是基于nodejs的，所以安装GruntJS之前，需要保证你的电脑有<a href="http://nodejs.org/">nodejs环境</a>，node环境比之前安装简单多了，现在windows平台只需要下载node安装程序，一路next就可以了。</p>]]>
+    
+    </summary>
+    
+      <category term="前端工具" scheme="http://js8.in/tags/%E5%89%8D%E7%AB%AF%E5%B7%A5%E5%85%B7/"/>
+    
+      <category term="grunt" scheme="http://js8.in/tags/grunt/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[双屏切图：使用livereload实现自动刷新]]></title>
+    <link href="http://js8.in/2013/04/07/%E5%8F%8C%E5%B1%8F%E5%88%87%E5%9B%BE%EF%BC%9A%E4%BD%BF%E7%94%A8livereload%E5%AE%9E%E7%8E%B0%E8%87%AA%E5%8A%A8%E5%88%B7%E6%96%B0/"/>
+    <id>http://js8.in/2013/04/07/双屏切图：使用livereload实现自动刷新/</id>
+    <published>2013-04-07T12:49:27.000Z</published>
+    <updated>2017-08-10T02:21:03.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>livereload</strong>是一个web开发辅助工具，当我们修改完html、css和js的时候会自动刷新浏览器，解放码农的双手。这样在双屏切图、写js代码的时候会提高很多效率。livereload有很多版本，比如基于ruby的版本，我们今天介绍的是node+grunt+chrome插件一体化方案。</p>
+<p>我们使用的这个livereload的基本原理是试用node开启一个websocket服务，并且检测文件变化，浏览器打开一个页面时候，引入固定的livereload.js（chrome插件会帮忙加上）会建立ws请求，当node检测到文件变化，则自动推送消息给浏览器，实现刷新。</p>
+<h2 id="livereload环境搭建">livereload环境搭建</h2><ul>
+<li>nodejs安装</li>
+<li>grunt安装</li>
+<li>grunt-contrib-watch：npm install grunt-contrib-watch –save-dev</li>
+<li>grunt-livereload：npm install grunt-livereload –save-dev</li>
+<li>chrome插件：<a href="https://chrome.google.com/webstore/detail/livereload/jnihajbhpnppcggbcgedagnkighmdlei" target="_blank" rel="external">安装</a></li>
+</ul>
+<a id="more"></a>
+<h3 id="编写grunt的Gruntfile-js文件">编写grunt的Gruntfile.js文件</h3><p>进入项目根目录，安装grunt基本服务（参考grunt使用介绍），然后修改Gruntfile.js内容，添加如下：</p>
+<pre><code class="javascript">livereload: {
+    options: {
+        base: &#39;public&#39;,
+    },
+    files: [&#39;src/**/*&#39;]
+}
+watch: {
+    all:{
+        files: [&#39;src/js/touch.js&#39;, &#39;src/sass/*.scss&#39;],
+        tasks: [&#39;jshint&#39;, &#39;compass:dev&#39;],
+    },
+    //grunt watch:js|css
+    js:{
+        files: [&#39;src/js/touch.js&#39;],
+        tasks: [&#39;jshint&#39;],
+    },
+    css:{
+        files: [&#39;src/sass/*.scss&#39;],
+        tasks: [&#39;compass:dev&#39;],
+    }
+}
+grunt.loadNpmTasks(&#39;grunt-livereload&#39;);
+grunt.registerTask(&#39;live&#39;, [&#39;livereload&#39;, &#39;watch:css&#39;]);
+</code></pre>
+<p>建立一个live的任务，开启livereload服务，同时watch css任务，当css文件发生变化的时候，执行compass:dev任务（即compass编译任务）。</p>
+<h3 id="执行grunt任务">执行grunt任务</h3><p>当我们进行切图（或者其他事情的时候），执行cmd进入项目目录，执行下面命令来启动grunt的live任务：</p>
+<pre><code class="shell">$ grunt live
+</code></pre>
+<p>浏览器端使用chrome插件打开要自动刷新的页面，例如：<a href="http://127.0.0.1/test.html，" target="_blank" rel="external">http://127.0.0.1/test.html，</a></p>
+<p>点击chrome插件livereload的icon，仔细观察会发现icon的中间空心圆点变成了实心的。 这样就可以自动刷新了。</p>
+<h3 id="使用livereload">使用livereload</h3><p>完成上面的步骤，这时候我们修改src/<em>*/</em>下的文件就会自动刷新页面，我修改了test.scss文件，</p>
+<p>首先触发的是watch:css任务，执行compass:dev任务，即编译css文件为test.css，</p>
+<p>这时触发livereload，实现自动刷新</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>livereload</strong>是一个web开发辅助工具，当我们修改完html、css和js的时候会自动刷新浏览器，解放码农的双手。这样在双屏切图、写js代码的时候会提高很多效率。livereload有很多版本，比如基于ruby的版本，我们今天介绍的是node+grunt+chrome插件一体化方案。</p>
+<p>我们使用的这个livereload的基本原理是试用node开启一个websocket服务，并且检测文件变化，浏览器打开一个页面时候，引入固定的livereload.js（chrome插件会帮忙加上）会建立ws请求，当node检测到文件变化，则自动推送消息给浏览器，实现刷新。</p>
+<h2 id="livereload环境搭建">livereload环境搭建</h2><ul>
+<li>nodejs安装</li>
+<li>grunt安装</li>
+<li>grunt-contrib-watch：npm install grunt-contrib-watch –save-dev</li>
+<li>grunt-livereload：npm install grunt-livereload –save-dev</li>
+<li>chrome插件：<a href="https://chrome.google.com/webstore/detail/livereload/jnihajbhpnppcggbcgedagnkighmdlei">安装</a></li>
+</ul>]]>
+    
+    </summary>
+    
+      <category term="javascript" scheme="http://js8.in/tags/javascript/"/>
+    
+      <category term="前端工具" scheme="http://js8.in/tags/%E5%89%8D%E7%AB%AF%E5%B7%A5%E5%85%B7/"/>
+    
+      <category term="livereload" scheme="http://js8.in/tags/livereload/"/>
+    
+      <category term="前端开发" scheme="http://js8.in/categories/%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91/"/>
+    
+  </entry>
+  
+</feed>
